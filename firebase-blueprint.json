@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "BlogPost": {
+      "title": "BlogPost",
+      "description": "ブラジル日記のブログ投稿データ",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "投稿の一意のID"
+        },
+        "title": {
+          "type": "string",
+          "description": "投稿のタイトル"
+        },
+        "published": {
+          "type": "string",
+          "description": "投稿日 (YYYY-MM-DD)"
+        },
+        "content": {
+          "type": "string",
+          "description": "投稿の本文 (Markdown形式)"
+        },
+        "labels": {
+          "type": "array",
+          "description": "タグ/ラベルの配列"
+        },
+        "url": {
+          "type": "string",
+          "description": "元ブログのURL (オプショナル)"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "published",
+        "content",
+        "labels"
+      ]
+    }
+  },
+  "firestore": {
+    "/posts/{postId}": {
+      "schema": "BlogPost",
+      "description": "ブログ投稿のコレクション"
+    }
+  }
+}
