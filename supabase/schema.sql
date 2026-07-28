@@ -41,7 +41,7 @@ create table if not exists public.ameblo_posts (
 alter table public.ameblo_posts enable row level security;
 
 -- 3. 統合ビュー: blog_unified_feed
--- 年表 (memory_timeline_events), FC2 (fc2_epata_blog_posts), ブラジル日記 (brazil_diary_posts), Ameblo (ameblo_posts) を時系列順に統合
+-- 年表 (memory_timeline_events), FC2 (fc2_epata_blog_posts), ブラジル日記 (brazil_diary_posts), Ameblo (ameblo_posts), ブログ原本 (x_post_queue) を時系列順に統合
 create or replace view public.blog_unified_feed as
 select
   id::text as item_id,
@@ -91,4 +91,18 @@ select
   url,
   array[category],
   category
-from public.ameblo_posts;
+from public.ameblo_posts
+
+union all
+
+select
+  id::text,
+  'blog_original',
+  coalesce(posted_at::date, created_at::date),
+  null::text as title,
+  content as body,
+  null::text as url,
+  null::text[] as tags,
+  null::text as category
+from public.x_post_queue;
+

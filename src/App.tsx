@@ -470,6 +470,13 @@ export default function App() {
           activeBg: 'bg-teal-900 text-teal-100 border-teal-900',
           icon: <Sparkles className="w-3.5 h-3.5 text-teal-700 shrink-0" />
         };
+      case 'blog_original':
+        return {
+          label: 'ブログ原本',
+          bg: 'bg-amber-100 text-amber-900 border-amber-300',
+          activeBg: 'bg-amber-900 text-amber-100 border-amber-900',
+          icon: <Edit className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+        };
       default:
         return {
           label: source,
@@ -483,9 +490,10 @@ export default function App() {
   // Filter unified feed items
   const filteredFeedItems = unifiedFeed.filter((item) => {
     const queryLower = searchQuery.toLowerCase().trim();
+    const displayTitle = item.title || (item.body ? item.body.replace(/[#*`\n]/g, " ").slice(0, 40) : "");
     const matchesSearch =
       !queryLower ||
-      item.title.toLowerCase().includes(queryLower) ||
+      displayTitle.toLowerCase().includes(queryLower) ||
       item.body.toLowerCase().includes(queryLower) ||
       (item.category && item.category.toLowerCase().includes(queryLower)) ||
       (item.tags && item.tags.some((t) => t.toLowerCase().includes(queryLower)));
@@ -684,9 +692,10 @@ export default function App() {
               {[
                 { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
                 { id: 'timeline', label: '年表 (120)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
-                { id: 'fc2_epata', label: 'FC2 エパタ (880)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
+                { id: 'fc2_epata', label: 'FC2 エパタ (913)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
                 { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
-                { id: 'ameblo', label: 'Ameblo (0)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
+                { id: 'ameblo', label: 'Ameblo (715)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
+                { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
               ].map((tab) => {
                 const isActive = selectedSourceFilter === tab.id;
                 return (
@@ -828,7 +837,7 @@ export default function App() {
                             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                               <div className="space-y-2">
                                 <h3 className="font-serif text-lg md:text-xl font-bold text-navy-950 group-hover:text-gold-700 transition duration-200 leading-tight">
-                                  {item.title}
+                                  {item.title || (item.body ? item.body.replace(/[#*`\n]/g, " ").slice(0, 35) + (item.body.length > 35 ? "..." : "") : "無題")}
                                 </h3>
 
                                 <p className="text-navy-700/80 text-sm line-clamp-3 leading-relaxed">
@@ -1028,7 +1037,7 @@ export default function App() {
                   </div>
 
                   <h2 className="font-serif text-2xl md:text-3xl font-bold text-navy-950 leading-tight">
-                    {selectedFeedItem.title}
+                    {selectedFeedItem.title || (selectedFeedItem.body ? selectedFeedItem.body.replace(/[#*`\n]/g, " ").slice(0, 40) + (selectedFeedItem.body.length > 40 ? "..." : "") : "無題")}
                   </h2>
 
                   {/* Category and Tags */}
