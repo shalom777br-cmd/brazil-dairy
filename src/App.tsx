@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs, addDoc, query, orderBy, setDoc, doc } from "firebase/firestore";
+import { collection, getDocs, addDoc, query, orderBy, setDoc, doc, deleteDoc } from "firebase/firestore";
 import { db } from "./lib/firebase";
 import { BlogPost } from "./types";
 import { dummyPosts } from "./data/dummy";
@@ -23,8 +23,16 @@ import {
   LogOut,
   ChevronRight,
   Sparkles,
-  Info
+  Info,
+  Download,
+  Edit,
+  Trash2,
+  Database,
+  Clock
 } from "lucide-react";
+import { SupabaseModal } from "./components/SupabaseModal";
+import { fetchUnifiedFeed, UnifiedFeedItem } from "./lib/supabase";
+
 
 enum OperationType {
   CREATE = 'create',
@@ -87,6 +95,7 @@ export default function App() {
   const [newUrl, setNewUrl] = useState("");
   const [formError, setFormError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
 
   // Import State
   const [isImporting, setIsImporting] = useState(false);
@@ -94,6 +103,72 @@ export default function App() {
   const [importStatusMessage, setImportStatusMessage] = useState("");
   const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
   const [importResult, setImportResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Delete State
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [postToDelete, setPostToDelete] = useState<BlogPost | null>(null);
+  const [deleteResult, setDeleteResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Supabase State
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+
+  // Unified Feed State
+  const [unifiedFeed, setUnifiedFeed] = useState<UnifiedFeedItem[]>([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
+  const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('all');
+  const [feedOffset, setFeedOffset] = useState<number>(0);
+  const [hasMoreFeed, setHasMoreFeed] = useState<boolean>(true);
+  const [totalFeedCount, setTotalFeedCount] = useState<number>(0);
+  const [selectedFeedItem, setSelectedFeedItem] = useState<UnifiedFeedItem | null>(null);
+
+  const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'all', append = false) => {
+    setIsFeedLoading(true);
+    try {
+      const res = await fetchUnifiedFeed(50, offset, sourceFilter);
+      if (res && res.items) {
+        if (append) {
+          setUnifiedFeed((prev) => [...prev, ...res.items]);
+        } else {
+          setUnifiedFeed(res.items);
+        }
+        setTotalFeedCount(res.totalCount);
+        setHasMoreFeed(offset + res.items.length < res.totalCount);
+      }
+    } catch (err) {
+      console.warn("Supabase unified feed fetch failed, using fallback:", err);
+      const fallbackItems: UnifiedFeedItem[] = importedPosts.map((p, idx) => ({
+        item_id: p.id || `fallback-${idx}`,
+        source: 'brazil_diary',
+        posted_date: p.published ? p.published.split('T')[0] : '2011-01-01',
+        title: p.title || '無題',
+        body: p.content || '',
+        url: p.url,
+        tags: p.labels || ['ブラジル日記'],
+        category: p.labels && p.labels.length > 0 ? p.labels[0] : 'ブラジル日記'
+      }));
+
+      let filtered = fallbackItems;
+      if (sourceFilter !== 'all' && sourceFilter !== 'brazil_diary') {
+        filtered = [];
+      }
+
+      if (append) {
+        setUnifiedFeed((prev) => [...prev, ...filtered]);
+      } else {
+        setUnifiedFeed(filtered);
+      }
+      setTotalFeedCount(filtered.length);
+      setHasMoreFeed(false);
+    } finally {
+      setIsFeedLoading(false);
+    }
+  };
+
+  const handleLoadMoreFeed = () => {
+    const nextOffset = feedOffset + 50;
+    setFeedOffset(nextOffset);
+    loadUnifiedFeedData(nextOffset, selectedSourceFilter, true);
+  };
 
   const handleImportPosts = () => {
     setIsImportConfirmOpen(true);
@@ -138,14 +213,20 @@ export default function App() {
     }
   };
 
-  // Load Admin status from LocalStorage
+  // Load Admin status & Unified Feed
   useEffect(() => {
     const savedAdmin = localStorage.getItem("brazil_blog_admin");
     if (savedAdmin === "true") {
       setIsAdmin(true);
     }
     fetchPosts();
+    loadUnifiedFeedData(0, selectedSourceFilter, false);
   }, []);
+
+  useEffect(() => {
+    setFeedOffset(0);
+    loadUnifiedFeedData(0, selectedSourceFilter, false);
+  }, [selectedSourceFilter]);
 
   const fetchPosts = async () => {
     setIsLoading(true);
@@ -205,7 +286,98 @@ export default function App() {
     localStorage.removeItem("brazil_blog_admin");
   };
 
-  // Submit Post
+  // Export Posts to JSON
+  const handleExportPosts = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(posts, null, 2));
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "brazil_blog_export.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } catch (error) {
+      console.error("Export error:", error);
+      alert("エクスポート中にエラーが発生しました。");
+    }
+  };
+
+  // Click Edit
+  const handleEditClick = (post: BlogPost) => {
+    setEditingPostId(post.id);
+    setNewTitle(post.title);
+    setNewPublished(post.published.split("T")[0]);
+    setNewLabelsStr(post.labels.join(", "));
+    setNewContent(post.content);
+    setNewUrl(post.url || "");
+    setFormError("");
+    setIsWriteModalOpen(true);
+  };
+
+  // Click Delete for BlogPost
+  const handleDeleteClick = (post: BlogPost | null) => {
+    if (!post) return;
+    setPostToDelete(post);
+    setIsDeleteConfirmOpen(true);
+  };
+
+  // Click Delete for Unified Feed Item
+  const [feedItemToDelete, setFeedItemToDelete] = useState<UnifiedFeedItem | null>(null);
+
+  const handleDeleteFeedItemClick = (item: UnifiedFeedItem | null, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!item) return;
+    setFeedItemToDelete(item);
+    setIsDeleteConfirmOpen(true);
+  };
+
+  // Actual Delete Execution
+  const executeDeletePost = async () => {
+    if (feedItemToDelete) {
+      setUnifiedFeed((prev) => prev.filter((i) => i.item_id !== feedItemToDelete.item_id));
+      if (selectedFeedItem?.item_id === feedItemToDelete.item_id) {
+        setSelectedFeedItem(null);
+      }
+      setTotalFeedCount((prev) => Math.max(0, prev - 1));
+      setIsDeleteConfirmOpen(false);
+      setFeedItemToDelete(null);
+      return;
+    }
+
+    if (!postToDelete) return;
+    try {
+      const docRef = doc(db, "posts", postToDelete.id);
+      await deleteDoc(docRef);
+      setPosts((prev) => prev.filter((p) => p.id !== postToDelete.id));
+      if (selectedPost?.id === postToDelete.id) {
+        setSelectedPost(null);
+      }
+    } catch (error) {
+      console.error("Error deleting post:", error);
+      try {
+        handleFirestoreError(error, OperationType.DELETE, `posts/${postToDelete.id}`);
+      } catch (e) {
+        console.error(e);
+      }
+    } finally {
+      setIsDeleteConfirmOpen(false);
+      setPostToDelete(null);
+    }
+  };
+
+  // Close Write/Edit Modal and Reset Form
+  const handleCloseWriteModal = () => {
+    setIsWriteModalOpen(false);
+    setEditingPostId(null);
+    setNewTitle("");
+    setNewPublished(new Date().toISOString().split("T")[0]);
+    setNewLabelsStr("");
+    setNewContent("");
+    setNewUrl("");
+    setFormError("");
+  };
+
+  // Submit Post (handles create or update)
   const handlePostSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !newPublished || !newContent.trim() || !newLabelsStr.trim()) {
@@ -221,9 +393,9 @@ export default function App() {
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    const generatedId = "post-" + Date.now();
+    const targetId = editingPostId || "post-" + Date.now();
     const postData: BlogPost = {
-      id: generatedId,
+      id: targetId,
       title: newTitle,
       published: newPublished,
       content: newContent,
@@ -236,11 +408,19 @@ export default function App() {
 
     try {
       // Save directly to Firestore
-      const docRef = doc(db, "posts", generatedId);
+      const docRef = doc(db, "posts", targetId);
       await setDoc(docRef, postData);
       
       // Update state and close
-      setPosts((prev) => [postData, ...prev]);
+      if (editingPostId) {
+        setPosts((prev) => prev.map((p) => p.id === editingPostId ? postData : p));
+        if (selectedPost?.id === editingPostId) {
+          setSelectedPost(postData);
+        }
+      } else {
+        setPosts((prev) => [postData, ...prev]);
+      }
+      
       setIsWriteModalOpen(false);
       
       // Reset form
@@ -249,12 +429,101 @@ export default function App() {
       setNewLabelsStr("");
       setNewContent("");
       setNewUrl("");
+      setEditingPostId(null);
     } catch (error) {
       console.error("Error saving post:", error);
       setFormError("保存に失敗しました。接続環境をご確認ください。");
-      handleFirestoreError(error, OperationType.WRITE, `posts/${generatedId}`);
+      handleFirestoreError(error, OperationType.WRITE, `posts/${targetId}`);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Helper for source badges in Unified Feed
+  const getSourceBadge = (source: string) => {
+    switch (source) {
+      case 'timeline':
+        return {
+          label: '年表',
+          bg: 'bg-purple-100 text-purple-900 border-purple-300',
+          activeBg: 'bg-purple-900 text-purple-100 border-purple-900',
+          icon: <Clock className="w-3.5 h-3.5 text-purple-700 shrink-0" />
+        };
+      case 'fc2_epata':
+        return {
+          label: 'FC2 エパタ',
+          bg: 'bg-blue-100 text-blue-900 border-blue-300',
+          activeBg: 'bg-blue-900 text-blue-100 border-blue-900',
+          icon: <BookOpen className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+        };
+      case 'brazil_diary':
+        return {
+          label: 'ブラジル日記',
+          bg: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+          activeBg: 'bg-emerald-900 text-emerald-100 border-emerald-900',
+          icon: <Globe className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+        };
+      case 'ameblo':
+        return {
+          label: 'Ameblo',
+          bg: 'bg-teal-100 text-teal-900 border-teal-300',
+          activeBg: 'bg-teal-900 text-teal-100 border-teal-900',
+          icon: <Sparkles className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+        };
+      default:
+        return {
+          label: source,
+          bg: 'bg-gray-100 text-gray-800 border-gray-300',
+          activeBg: 'bg-gray-900 text-gray-100 border-gray-900',
+          icon: <BookOpen className="w-3.5 h-3.5 text-gray-700 shrink-0" />
+        };
+    }
+  };
+
+  // Filter unified feed items
+  const filteredFeedItems = unifiedFeed.filter((item) => {
+    const queryLower = searchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !queryLower ||
+      item.title.toLowerCase().includes(queryLower) ||
+      item.body.toLowerCase().includes(queryLower) ||
+      (item.category && item.category.toLowerCase().includes(queryLower)) ||
+      (item.tags && item.tags.some((t) => t.toLowerCase().includes(queryLower)));
+
+    const matchesLabels =
+      selectedLabels.length === 0 ||
+      (item.tags && selectedLabels.every((label) => item.tags?.includes(label))) ||
+      (item.category && selectedLabels.includes(item.category));
+
+    return matchesSearch && matchesLabels;
+  });
+
+  // Group Unified Feed Items by Year
+  const feedByYear: { [year: string]: UnifiedFeedItem[] } = {};
+  filteredFeedItems.forEach((item) => {
+    const year = item.posted_date ? item.posted_date.split("-")[0] : "その他";
+    if (!feedByYear[year]) {
+      feedByYear[year] = [];
+    }
+    feedByYear[year].push(item);
+  });
+
+  const sortedFeedYears = Object.keys(feedByYear).sort((a, b) => b.localeCompare(a));
+
+  // Extract unique labels from posts & unified feed
+  const allLabels = Array.from(
+    new Set([
+      ...posts.flatMap((post) => post.labels || []),
+      ...unifiedFeed.flatMap((item) => item.tags || []),
+      ...unifiedFeed.map((item) => item.category).filter(Boolean) as string[]
+    ])
+  ).filter(Boolean);
+
+  const toggleLabel = (label: string) => {
+    if (selectedLabels.includes(label)) {
+      setSelectedLabels(selectedLabels.filter((l) => l !== label));
+    } else {
+      setSelectedLabels([...selectedLabels, label]);
     }
   };
 
@@ -276,46 +545,6 @@ export default function App() {
     };
   };
 
-  // Filtering posts
-  const filteredPosts = posts.filter((post) => {
-    const matchesSearch = 
-      post.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      post.labels.some(l => l.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesLabels = 
-      selectedLabels.length === 0 || 
-      selectedLabels.every(label => post.labels.includes(label));
-
-    return matchesSearch && matchesLabels;
-  });
-
-  // Extract all unique labels
-  const allLabels = Array.from(
-    new Set(posts.flatMap((post) => post.labels))
-  );
-
-  // Group by Year
-  const postsByYear: { [year: string]: BlogPost[] } = {};
-  filteredPosts.forEach((post) => {
-    const year = post.published.split("-")[0] || "その他";
-    if (!postsByYear[year]) {
-      postsByYear[year] = [];
-    }
-    postsByYear[year].push(post);
-  });
-
-  // Sorted Years (descending)
-  const sortedYears = Object.keys(postsByYear).sort((a, b) => b.localeCompare(a));
-
-  const toggleLabel = (label: string) => {
-    if (selectedLabels.includes(label)) {
-      setSelectedLabels(selectedLabels.filter((l) => l !== label));
-    } else {
-      setSelectedLabels([...selectedLabels, label]);
-    }
-  };
-
   return (
     <div id="app-root" className="min-h-screen flex flex-col bg-cream-100 selection:bg-gold-300 selection:text-navy-950">
       {/* Decorative Top Border */}
@@ -334,14 +563,13 @@ export default function App() {
               <Compass className="w-5 h-5 animate-pulse" />
               <span className="font-serif tracking-widest text-xs uppercase">Missão de Diário</span>
               <span className="h-px w-8 bg-gold-500/50"></span>
-              <span className="text-xs tracking-wider">ブラジル宣教日記</span>
+              <span className="text-xs tracking-wider">統合ブログアーカイブ</span>
             </div>
             <h1 className="font-serif text-3xl md:text-5xl font-bold tracking-tight text-cream-50">
-              ブラジル日記
+              ブラジル日記 & 統合フィード
             </h1>
             <p className="mt-2 text-navy-100/80 max-w-xl text-sm leading-relaxed">
-              南米ブラジルの地で神様の導きに従い、福音の種を蒔き続ける宣教の歩み。
-              喜びと葛藤、人々との温かい交わりの記録をタイムラインでお届けします。
+              年表・FC2ブログエパタ・ブラジル日記・Amebloを1本化。神様の導きと恵みの軌跡を統合タイムラインでお届けします。
             </p>
           </div>
 
@@ -353,6 +581,13 @@ export default function App() {
                 </span>
                 <div className="flex gap-2">
                   <button 
+                    id="btn-supabase-modal"
+                    onClick={() => setIsSupabaseModalOpen(true)}
+                    className="bg-navy-950 hover:bg-navy-900 border border-gold-500/40 text-gold-400 font-medium text-xs py-1.5 px-3 rounded shadow transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <Database className="w-3.5 h-3.5" /> Supabase 統合
+                  </button>
+                  <button 
                     id="btn-import-posts"
                     onClick={handleImportPosts}
                     disabled={isImporting}
@@ -361,8 +596,24 @@ export default function App() {
                     <RefreshCw className={`w-3.5 h-3.5 ${isImporting ? "animate-spin" : ""}`} /> 記事インポート
                   </button>
                   <button 
+                    id="btn-export-posts"
+                    onClick={handleExportPosts}
+                    className="bg-teal-600 hover:bg-teal-500 text-cream-100 font-medium text-xs py-1.5 px-3 rounded shadow transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" /> 記事エクスポート
+                  </button>
+                  <button 
                     id="btn-write-post"
-                    onClick={() => setIsWriteModalOpen(true)}
+                    onClick={() => {
+                      setEditingPostId(null);
+                      setNewTitle("");
+                      setNewPublished(new Date().toISOString().split("T")[0]);
+                      setNewLabelsStr("");
+                      setNewContent("");
+                      setNewUrl("");
+                      setFormError("");
+                      setIsWriteModalOpen(true);
+                    }}
                     className="bg-gold-500 hover:bg-gold-400 text-navy-950 font-medium text-xs py-1.5 px-3 rounded shadow transition flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" /> 投稿を書く
@@ -415,46 +666,90 @@ export default function App() {
         
         {/* Left Side: Main Blog Timeline */}
         <section className="flex-1 order-2 md:order-1">
+          {/* Source Filter Switcher (blog_unified_feed) */}
+          <div className="mb-6 p-4 bg-cream-50 border border-gold-500/30 rounded-xl shadow-sm space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-navy-950 font-serif font-bold text-sm">
+                <Compass className="w-4 h-4 text-gold-600" />
+                統合フィードソース (<code className="text-xs text-gold-700 font-mono">blog_unified_feed</code>)
+              </div>
+              <div className="flex items-center gap-2 text-xs text-navy-700 font-mono">
+                <span>表示件数: {filteredFeedItems.length} / {totalFeedCount} 件</span>
+                {isFeedLoading && <RefreshCw className="w-3.5 h-3.5 text-gold-500 animate-spin" />}
+              </div>
+            </div>
+
+            {/* Source Filter Tabs */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
+                { id: 'timeline', label: '年表 (120)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
+                { id: 'fc2_epata', label: 'FC2 エパタ (880)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
+                { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
+                { id: 'ameblo', label: 'Ameblo (0)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
+              ].map((tab) => {
+                const isActive = selectedSourceFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setSelectedSourceFilter(tab.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-serif font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                      isActive
+                        ? 'bg-navy-950 text-gold-400 border-navy-900 shadow-md ring-1 ring-gold-500/40'
+                        : `${tab.badge} hover:brightness-95`
+                    }`}
+                  >
+                    {tab.icon}
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Active Filters Summary */}
-          {(searchQuery || selectedLabels.length > 0) && (
+          {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all') && (
             <div className="mb-6 p-4 bg-cream-200 border border-cream-300 rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-navy-600 font-serif">
-                  検索条件: {searchQuery && `「${searchQuery}」`} 
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-navy-700 font-serif font-medium">
+                  現在の絞り込み: 
+                  {selectedSourceFilter !== 'all' && ` [ソース: ${getSourceBadge(selectedSourceFilter).label}]`}
+                  {searchQuery && ` [キーワード: 「${searchQuery}」]`} 
                   {selectedLabels.length > 0 && ` [タグ: ${selectedLabels.join(", ")}]`}
                 </span>
                 <span className="text-xs bg-navy-100 text-navy-800 px-2 py-0.5 rounded-full font-mono">
-                  {filteredPosts.length} 件
+                  {filteredFeedItems.length} 件表示
                 </span>
               </div>
               <button
                 onClick={() => {
                   setSearchQuery("");
                   setSelectedLabels([]);
+                  setSelectedSourceFilter("all");
                 }}
-                className="text-xs text-gold-700 hover:text-gold-600 underline flex items-center gap-1 cursor-pointer"
+                className="text-xs text-gold-700 hover:text-gold-600 underline flex items-center gap-1 cursor-pointer font-serif"
               >
-                <RefreshCw className="w-3 h-3" /> フィルターをクリア
+                <RefreshCw className="w-3 h-3" /> 条件をクリア
               </button>
             </div>
           )}
 
-          {isLoading ? (
+          {isFeedLoading && unifiedFeed.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <RefreshCw className="w-8 h-8 text-gold-500 animate-spin" />
-              <p className="text-sm text-navy-600/70 font-serif">航海ログを紐解いています...</p>
+              <p className="text-sm text-navy-600/70 font-serif">統合フィード(blog_unified_feed)を読み込んでいます...</p>
             </div>
-          ) : filteredPosts.length === 0 ? (
+          ) : filteredFeedItems.length === 0 ? (
             <div className="text-center py-16 bg-cream-50 border border-cream-200 rounded-xl shadow-inner">
               <Globe className="w-12 h-12 text-cream-400 mx-auto mb-3" />
-              <p className="text-lg font-serif text-navy-700 mb-2">該当する日記が見つかりません</p>
+              <p className="text-lg font-serif text-navy-700 mb-2">該当するフィードが見つかりません</p>
               <p className="text-sm text-navy-600/60 max-w-md mx-auto">
-                キーワードやタグの組み合わせを変えて、もう一度検索してみてください。
+                ソースフィルターや検索キーワードを変更してみてください。
               </p>
             </div>
           ) : (
             <div className="space-y-12">
-              {sortedYears.map((year) => (
+              {sortedFeedYears.map((year) => (
                 <div key={year} className="relative">
                   {/* Year Header Banner */}
                   <div className="sticky top-0 z-10 py-2 mb-6">
@@ -466,11 +761,11 @@ export default function App() {
                   {/* Vertical Timeline Thread */}
                   <div className="absolute left-6 md:left-8 top-12 bottom-0 w-0.5 bg-gradient-to-b from-gold-500/30 to-gold-500/5"></div>
 
-                  {/* Posts under this year */}
+                  {/* Feed Items under this year */}
                   <div className="space-y-8 pl-12 md:pl-16">
-                    {postsByYear[year].map((post, idx) => {
-                      const stampInfo = getPortugueseMonth(post.published);
-                      // Generate stamp styling varieties
+                    {feedByYear[year].map((item, idx) => {
+                      const badge = getSourceBadge(item.source);
+                      const stampInfo = getPortugueseMonth(item.posted_date || "2011-01-01");
                       const stampRotations = ["-rotate-6", "rotate-3", "-rotate-3", "rotate-6"];
                       const stampColors = [
                         "border-gold-500 text-gold-700 hover:scale-105",
@@ -483,10 +778,10 @@ export default function App() {
 
                       return (
                         <article 
-                          id={`post-card-${post.id}`}
-                          key={post.id}
+                          id={`feed-card-${item.item_id}`}
+                          key={item.item_id}
                           className="group relative bg-cream-50 border border-cream-300 hover:border-gold-500/50 rounded-xl p-5 md:p-6 shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer"
-                          onClick={() => setSelectedPost(post)}
+                          onClick={() => setSelectedFeedItem(item)}
                         >
                           {/* Passport Stamp Date Marker */}
                           <div className="absolute -left-12 md:-left-16 top-4 z-10">
@@ -497,52 +792,93 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                            <div>
-                              {/* Labels */}
-                              <div className="flex flex-wrap gap-1.5 mb-2.5">
-                                {post.labels.map((label) => (
-                                  <span 
-                                    key={label}
-                                    className="inline-flex items-center gap-1 bg-cream-200 text-navy-700 text-[10px] font-serif px-2 py-0.5 rounded"
-                                  >
-                                    <Tag className="w-2.5 h-2.5 text-gold-500" />
-                                    {label}
-                                  </span>
-                                ))}
+                          <div className="flex flex-col gap-3">
+                            {/* Source Badge & Category/Tags & Action Buttons */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cream-200/80 pb-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-serif font-bold border flex items-center gap-1.5 ${badge.bg}`}>
+                                  {badge.icon}
+                                  {badge.label}
+                                </span>
+                                <span className="text-xs text-navy-600/80 font-mono">
+                                  {item.posted_date}
+                                </span>
                               </div>
 
-                              {/* Title */}
-                              <h3 className="font-serif text-lg md:text-xl font-bold text-navy-950 group-hover:text-gold-700 transition duration-200 leading-tight">
-                                {post.title}
-                              </h3>
+                              <div className="flex items-center gap-2">
+                                {item.category && (
+                                  <span className="text-[10px] bg-cream-200 text-navy-800 px-2 py-0.5 rounded font-serif border border-cream-300">
+                                    {item.category}
+                                  </span>
+                                )}
 
-                              {/* Excerpt */}
-                              <p className="mt-2 text-navy-700/80 text-sm line-clamp-3 leading-relaxed">
-                                {post.content.replace(/[#*`\n]/g, " ").slice(0, 150)}...
-                              </p>
+                                {/* Delete Post Button */}
+                                <button
+                                  onClick={(e) => handleDeleteFeedItemClick(item, e)}
+                                  title="この投稿を削除"
+                                  className="p-1.5 text-navy-600/60 hover:text-red-600 hover:bg-red-50 rounded border border-cream-300/80 hover:border-red-200 transition cursor-pointer flex items-center gap-1 text-[11px] font-serif"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                  <span className="hidden sm:inline">削除</span>
+                                </button>
+                              </div>
                             </div>
 
-                            {/* Arrow hint */}
-                            <div className="self-end md:self-center text-gold-500 group-hover:translate-x-1.5 transition-transform duration-200 shrink-0">
-                              <ChevronRight className="w-5 h-5" />
+                            {/* Title & Excerpt */}
+                            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                              <div className="space-y-2">
+                                <h3 className="font-serif text-lg md:text-xl font-bold text-navy-950 group-hover:text-gold-700 transition duration-200 leading-tight">
+                                  {item.title}
+                                </h3>
+
+                                <p className="text-navy-700/80 text-sm line-clamp-3 leading-relaxed">
+                                  {item.body.replace(/[#*`\n]/g, " ").slice(0, 160)}...
+                                </p>
+                              </div>
+
+                              <div className="self-end md:self-center text-gold-500 group-hover:translate-x-1.5 transition-transform duration-200 shrink-0">
+                                <ChevronRight className="w-5 h-5" />
+                              </div>
                             </div>
+
+                            {/* External URL indicator */}
+                            {item.url && (
+                              <div className="pt-2 flex justify-end">
+                                <span className="text-[10px] font-serif text-navy-600/70 hover:text-navy-950 flex items-center gap-1 underline">
+                                  元記事を見る <ExternalLink className="w-3 h-3 text-gold-600" />
+                                </span>
+                              </div>
+                            )}
                           </div>
-
-                          {/* Decorative stamp clip */}
-                          {post.url && (
-                            <div className="absolute top-3 right-3 text-gold-500/40 hover:text-gold-500/100 transition-colors pointer-events-none md:pointer-events-auto">
-                              <span className="text-[9px] font-mono tracking-wider flex items-center gap-0.5">
-                                <Globe className="w-3 h-3" /> URLあり
-                              </span>
-                            </div>
-                          )}
                         </article>
                       );
                     })}
                   </div>
                 </div>
               ))}
+
+              {/* Load More Button */}
+              {hasMoreFeed && (
+                <div className="text-center py-6">
+                  <button
+                    onClick={handleLoadMoreFeed}
+                    disabled={isFeedLoading}
+                    className="bg-navy-900 hover:bg-navy-800 disabled:bg-navy-950 text-cream-100 hover:text-gold-400 font-serif font-bold text-xs py-3 px-8 rounded-xl shadow-md border border-gold-500/30 transition flex items-center gap-2 mx-auto cursor-pointer"
+                  >
+                    {isFeedLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-gold-400" />
+                        読み込み中...
+                      </>
+                    ) : (
+                      <>
+                        <BookOpen className="w-4 h-4 text-gold-400" />
+                        さらに読み込む ({filteredFeedItems.length} / {totalFeedCount} 件)
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -627,6 +963,121 @@ export default function App() {
 
       {/* Reader Panel: Slides-in from right */}
       <AnimatePresence>
+        {selectedFeedItem && (
+          <div className="fixed inset-0 z-50 flex justify-end" id="unified-feed-reader-overlay">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedFeedItem(null)}
+              className="absolute inset-0 bg-navy-950/40 backdrop-blur-sm"
+            />
+
+            {/* Sliding Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="relative w-full max-w-2xl h-full bg-cream-50 border-l border-gold-500/20 shadow-2xl flex flex-col z-10"
+              id="unified-feed-reader-panel"
+            >
+              {/* Reader Header */}
+              <div className="bg-navy-900 text-cream-100 p-5 border-b border-gold-500/30 flex items-center justify-between sticky top-0 z-20">
+                <div className="flex items-center gap-3">
+                  <BookOpen className="w-5 h-5 text-gold-400" />
+                  <span className="font-serif tracking-widest text-xs uppercase text-gold-400">統合ブログアーカイブ</span>
+                </div>
+                <button
+                  id="btn-close-unified-reader"
+                  onClick={() => setSelectedFeedItem(null)}
+                  className="p-1 text-cream-100/70 hover:text-gold-400 hover:bg-navy-800 rounded transition cursor-pointer"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Reader Content Body */}
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+                <div>
+                  {/* Source badge and date */}
+                  <div className="flex items-center justify-between gap-3 mb-4 text-xs font-serif">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-serif font-bold border flex items-center gap-1.5 ${getSourceBadge(selectedFeedItem.source).bg}`}>
+                        {getSourceBadge(selectedFeedItem.source).icon}
+                        {getSourceBadge(selectedFeedItem.source).label}
+                      </span>
+                      <span className="text-navy-700/80 font-mono flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-gold-500" />
+                        {selectedFeedItem.posted_date}
+                      </span>
+                    </div>
+
+                    {selectedFeedItem.url && (
+                      <a 
+                        href={selectedFeedItem.url} 
+                        target="_blank" 
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center gap-1 text-navy-700 hover:text-gold-600 font-serif text-xs underline cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 text-gold-600" />
+                        元記事を開く
+                      </a>
+                    )}
+                  </div>
+
+                  <h2 className="font-serif text-2xl md:text-3xl font-bold text-navy-950 leading-tight">
+                    {selectedFeedItem.title}
+                  </h2>
+
+                  {/* Category and Tags */}
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    {selectedFeedItem.category && (
+                      <span className="bg-cream-200 text-navy-900 text-xs font-serif px-2.5 py-1 rounded border border-cream-300">
+                        カテゴリー: {selectedFeedItem.category}
+                      </span>
+                    )}
+                    {selectedFeedItem.tags?.map((tag) => (
+                      <span
+                        key={tag}
+                        className="bg-cream-100 text-navy-800 text-xs font-serif px-2.5 py-1 rounded border border-cream-300/60"
+                      >
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <hr className="border-cream-300" />
+
+                {/* Markdown Rendered Content */}
+                <div className="markdown-body">
+                  <Markdown>{selectedFeedItem.body}</Markdown>
+                </div>
+              </div>
+
+              {/* Reader Footer */}
+              <div className="p-4 bg-cream-100 border-t border-cream-300 flex items-center justify-between text-xs font-serif">
+                <button
+                  onClick={(e) => handleDeleteFeedItemClick(selectedFeedItem, e)}
+                  className="bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-800 border border-red-200 py-1.5 px-3 rounded font-serif transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  この投稿を削除
+                </button>
+
+                <button
+                  onClick={() => setSelectedFeedItem(null)}
+                  className="bg-navy-800 text-cream-100 hover:bg-navy-900 py-1.5 px-4 rounded font-serif transition cursor-pointer"
+                >
+                  閉じる
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {selectedPost && (
           <div className="fixed inset-0 z-50 flex justify-end" id="reader-overlay">
             {/* Backdrop */}
@@ -661,6 +1112,31 @@ export default function App() {
                   <X className="w-6 h-6" />
                 </button>
               </div>
+
+              {/* Admin Action Bar */}
+              {isAdmin && (
+                <div className="bg-navy-800 border-b border-gold-500/20 px-6 py-2.5 flex items-center justify-between text-xs shrink-0 sticky top-[68px] z-20">
+                  <span className="text-gold-400 font-serif flex items-center gap-1 font-medium">
+                    <Unlock className="w-3.5 h-3.5" /> 管理者コントロール
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      id="btn-reader-edit"
+                      onClick={() => handleEditClick(selectedPost)}
+                      className="bg-gold-500 hover:bg-gold-400 text-navy-950 font-serif font-bold px-3 py-1 rounded transition flex items-center gap-1 cursor-pointer text-xs"
+                    >
+                      <Edit className="w-3 h-3" /> 編集する
+                    </button>
+                    <button
+                      id="btn-reader-delete"
+                      onClick={() => handleDeleteClick(selectedPost)}
+                      className="bg-red-600 hover:bg-red-500 text-cream-100 font-serif font-bold px-3 py-1 rounded transition flex items-center gap-1 cursor-pointer text-xs"
+                    >
+                      <Trash2 className="w-3 h-3" /> 削除する
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Reader Content Body */}
               <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
@@ -806,7 +1282,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsWriteModalOpen(false)}
+              onClick={handleCloseWriteModal}
               className="absolute inset-0 bg-navy-950/60 backdrop-blur-sm"
             />
 
@@ -819,10 +1295,10 @@ export default function App() {
               <div className="flex items-center justify-between border-b border-cream-300 pb-3 shrink-0">
                 <h3 className="font-serif font-bold text-xl text-navy-800 flex items-center gap-2">
                   <Compass className="w-5 h-5 text-gold-500 animate-spin-slow" />
-                  新しい日記を執筆する
+                  {editingPostId ? "日記を編集する" : "新しい日記を執筆する"}
                 </h3>
                 <button
-                  onClick={() => setIsWriteModalOpen(false)}
+                  onClick={handleCloseWriteModal}
                   className="text-navy-600/60 hover:text-navy-900 cursor-pointer"
                 >
                   <X className="w-5 h-5" />
@@ -917,7 +1393,7 @@ export default function App() {
               <div className="border-t border-cream-300 pt-4 flex justify-end gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsWriteModalOpen(false)}
+                  onClick={handleCloseWriteModal}
                   className="border border-cream-300 hover:bg-cream-200 text-navy-800 py-2 px-4 rounded text-xs font-serif transition cursor-pointer"
                   disabled={isSubmitting}
                 >
@@ -938,7 +1414,7 @@ export default function App() {
                   ) : (
                     <>
                       <Sparkles className="w-3.5 h-3.5" />
-                      日誌に保存する
+                      {editingPostId ? "変更を保存する" : "日誌に保存する"}
                     </>
                   )}
                 </button>
@@ -948,7 +1424,212 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Import Confirmation Modal */}
+      <AnimatePresence>
+        {isImportConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="import-confirm-modal">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsImportConfirmOpen(false)}
+              className="absolute inset-0 bg-navy-950/60 backdrop-blur-sm"
+            />
+
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md bg-cream-50 rounded-xl border border-gold-500/30 shadow-2xl p-6 z-10 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-cream-300 pb-3">
+                <h3 className="font-serif font-bold text-lg text-navy-800 flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-gold-500" />
+                  記事データの一括インポート
+                </h3>
+                <button
+                  onClick={() => setIsImportConfirmOpen(false)}
+                  className="text-navy-600/60 hover:text-navy-900 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-sm text-navy-700 leading-relaxed font-serif">
+                <p>
+                  静的データファイルに含まれる<strong>全 {importedPosts.length} 件</strong>の記事データをFirestoreデータベースにインポート（移行）します。
+                </p>
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    同じID（記事識別子）を持つ記事が既にFirestoreに登録されている場合、<strong>自動的に上書き（更新）</strong>されます。
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsImportConfirmOpen(false)}
+                  className="border border-cream-300 hover:bg-cream-200 text-navy-800 py-2 px-4 rounded text-xs font-serif transition cursor-pointer"
+                >
+                  キャンセル
+                </button>
+                <button
+                  id="btn-execute-import"
+                  type="button"
+                  onClick={() => {
+                    setIsImportConfirmOpen(false);
+                    executeImportPosts();
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-cream-100 font-bold py-2 px-4 rounded text-xs font-serif transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  インポートを実行する
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Import Result Modal */}
+      <AnimatePresence>
+        {importResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="import-result-modal">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setImportResult(null)}
+              className="absolute inset-0 bg-navy-950/60 backdrop-blur-sm"
+            />
+
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-sm bg-cream-50 rounded-xl border border-gold-500/30 shadow-2xl p-6 z-10 space-y-4 text-center"
+            >
+              <div className="flex justify-center">
+                {importResult.success ? (
+                  <div className="w-12 h-12 rounded-full bg-emerald-100 border border-emerald-400 flex items-center justify-center text-emerald-600 animate-bounce">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-red-100 border border-red-400 flex items-center justify-center text-red-600">
+                    <Info className="w-6 h-6" />
+                  </div>
+                )}
+              </div>
+
+              <h3 className="font-serif font-bold text-lg text-navy-950">
+                {importResult.success ? "インポート完了" : "インポート失敗"}
+              </h3>
+
+              <p className="text-xs text-navy-700 font-serif leading-relaxed px-2">
+                {importResult.message}
+              </p>
+
+              <div className="pt-2">
+                <button
+                  onClick={() => setImportResult(null)}
+                  className="w-full bg-navy-800 hover:bg-navy-900 text-cream-100 hover:text-gold-400 py-2 rounded text-xs font-serif transition cursor-pointer font-bold"
+                >
+                  閉じる
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {isDeleteConfirmOpen && (postToDelete || feedItemToDelete) && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" id="delete-confirm-modal">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setIsDeleteConfirmOpen(false);
+                setPostToDelete(null);
+                setFeedItemToDelete(null);
+              }}
+              className="absolute inset-0 bg-navy-950/60 backdrop-blur-sm"
+            />
+
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md bg-cream-50 rounded-xl border border-red-500/30 shadow-2xl p-6 z-10 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-cream-300 pb-3">
+                <h3 className="font-serif font-bold text-lg text-red-700 flex items-center gap-2">
+                  <Trash2 className="w-5 h-5" />
+                  投稿の削除
+                </h3>
+                <button
+                  onClick={() => {
+                    setIsDeleteConfirmOpen(false);
+                    setPostToDelete(null);
+                    setFeedItemToDelete(null);
+                  }}
+                  className="text-navy-600/60 hover:text-navy-900 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-sm text-navy-700 leading-relaxed font-serif">
+                <p>
+                  「<strong>{feedItemToDelete ? feedItemToDelete.title : postToDelete?.title}</strong>」を本当に削除してもよろしいですか？
+                </p>
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <span>
+                    この操作を実行すると、一覧・フィードから完全に削除され、<strong>元に戻すことはできません</strong>。
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDeleteConfirmOpen(false);
+                    setPostToDelete(null);
+                    setFeedItemToDelete(null);
+                  }}
+                  className="border border-cream-300 hover:bg-cream-200 text-navy-800 py-2 px-4 rounded text-xs font-serif transition cursor-pointer"
+                >
+                  キャンセル
+                </button>
+                <button
+                  id="btn-execute-delete"
+                  type="button"
+                  onClick={executeDeletePost}
+                  className="bg-red-600 hover:bg-red-500 text-cream-100 font-bold py-2 px-4 rounded text-xs font-serif transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  削除を実行する
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Supabase Specification & Sync Modal */}
+      <SupabaseModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+      />
+
       {/* Footer */}
+
       <footer id="app-footer" className="bg-navy-950 text-cream-100/50 text-center py-8 px-4 border-t border-gold-500/20 text-xs font-serif shrink-0">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">

@@ -5,4 +5,5 @@ export interface BlogPost {
   content: string;   // Markdown or Text
   labels: string[];
   url?: string;
+  importance_score?: string;
 }
