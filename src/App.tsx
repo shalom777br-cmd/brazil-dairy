@@ -28,10 +28,14 @@ import {
   Edit,
   Trash2,
   Database,
-  Clock
+  Clock,
+  Image,
+  Upload,
+  Camera,
+  Link2
 } from "lucide-react";
 import { SupabaseModal } from "./components/SupabaseModal";
-import { fetchUnifiedFeed, UnifiedFeedItem } from "./lib/supabase";
+import { fetchUnifiedFeed, UnifiedFeedItem, updateFeedItemInSupabase, insertNewBlogOriginalInSupabase } from "./lib/supabase";
 
 
 enum OperationType {
@@ -120,6 +124,42 @@ export default function App() {
   const [hasMoreFeed, setHasMoreFeed] = useState<boolean>(true);
   const [totalFeedCount, setTotalFeedCount] = useState<number>(0);
   const [selectedFeedItem, setSelectedFeedItem] = useState<UnifiedFeedItem | null>(null);
+
+  // Editing & Image State
+  const [editingFeedItem, setEditingFeedItem] = useState<UnifiedFeedItem | null>(null);
+  const [imageUrlInput, setImageUrlInput] = useState("");
+  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+
+  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (dataUrl) {
+          setUploadedImages((prev) => [...prev, dataUrl]);
+          const imageMarkdown = `\n\n![${file.name || "画像"}](${dataUrl})\n\n`;
+          setNewContent((prev) => prev + imageMarkdown);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleInsertImageUrl = () => {
+    if (!imageUrlInput.trim()) return;
+    const imageMarkdown = `\n\n![画像](${imageUrlInput.trim()})\n\n`;
+    setNewContent((prev) => prev + imageMarkdown);
+    setImageUrlInput("");
+  };
+
+  const handleInsertSampleImage = (url: string, alt: string) => {
+    const imageMarkdown = `\n\n![${alt}](${url})\n\n`;
+    setNewContent((prev) => prev + imageMarkdown);
+  };
+
 
   const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'all', append = false) => {
     setIsFeedLoading(true);
@@ -302,14 +342,29 @@ export default function App() {
     }
   };
 
-  // Click Edit
+  // Click Edit for BlogPost
   const handleEditClick = (post: BlogPost) => {
     setEditingPostId(post.id);
+    setEditingFeedItem(null);
     setNewTitle(post.title);
     setNewPublished(post.published.split("T")[0]);
     setNewLabelsStr(post.labels.join(", "));
     setNewContent(post.content);
     setNewUrl(post.url || "");
+    setFormError("");
+    setIsWriteModalOpen(true);
+  };
+
+  // Click Edit for Unified Feed Item
+  const handleEditFeedItemClick = (item: UnifiedFeedItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEditingFeedItem(item);
+    setEditingPostId(null);
+    setNewTitle(item.title || "");
+    setNewPublished(item.posted_date || new Date().toISOString().split("T")[0]);
+    setNewLabelsStr(item.tags ? item.tags.join(", ") : item.category || "");
+    setNewContent(item.body || "");
+    setNewUrl(item.url || "");
     setFormError("");
     setIsWriteModalOpen(true);
   };
@@ -369,19 +424,21 @@ export default function App() {
   const handleCloseWriteModal = () => {
     setIsWriteModalOpen(false);
     setEditingPostId(null);
+    setEditingFeedItem(null);
     setNewTitle("");
     setNewPublished(new Date().toISOString().split("T")[0]);
     setNewLabelsStr("");
     setNewContent("");
     setNewUrl("");
+    setImageUrlInput("");
     setFormError("");
   };
 
   // Submit Post (handles create or update)
   const handlePostSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newPublished || !newContent.trim() || !newLabelsStr.trim()) {
-      setFormError("必須項目(*)をすべて入力してください。");
+    if (!newPublished || !newContent.trim()) {
+      setFormError("必須項目(日付・本文)を入力してください。");
       return;
     }
 
@@ -393,51 +450,107 @@ export default function App() {
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    const targetId = editingPostId || "post-" + Date.now();
-    const postData: BlogPost = {
-      id: targetId,
-      title: newTitle,
-      published: newPublished,
-      content: newContent,
-      labels: parsedLabels,
-    };
+    const titleToSave = newTitle.trim() || null;
 
-    if (newUrl.trim()) {
-      postData.url = newUrl.trim();
+    if (editingFeedItem) {
+      const updatedItem: UnifiedFeedItem = {
+        ...editingFeedItem,
+        title: titleToSave,
+        posted_date: newPublished,
+        body: newContent,
+        category: parsedLabels[0] || editingFeedItem.category,
+        tags: parsedLabels.length > 0 ? parsedLabels : editingFeedItem.tags,
+        url: newUrl.trim() || undefined
+      };
+
+      await updateFeedItemInSupabase(updatedItem);
+
+      setUnifiedFeed((prev) =>
+        prev.map((i) => (i.item_id === editingFeedItem.item_id ? updatedItem : i))
+      );
+
+      if (selectedFeedItem?.item_id === editingFeedItem.item_id) {
+        setSelectedFeedItem(updatedItem);
+      }
+
+      handleCloseWriteModal();
+      setIsSubmitting(false);
+      return;
     }
 
-    try {
-      // Save directly to Firestore
-      const docRef = doc(db, "posts", targetId);
-      await setDoc(docRef, postData);
-      
-      // Update state and close
-      if (editingPostId) {
+    if (editingPostId) {
+      const targetId = editingPostId;
+      const postData: BlogPost = {
+        id: targetId,
+        title: titleToSave || "無題",
+        published: newPublished,
+        content: newContent,
+        labels: parsedLabels.length > 0 ? parsedLabels : ["日誌"],
+      };
+
+      if (newUrl.trim()) {
+        postData.url = newUrl.trim();
+      }
+
+      try {
+        const docRef = doc(db, "posts", targetId);
+        await setDoc(docRef, postData);
+
         setPosts((prev) => prev.map((p) => p.id === editingPostId ? postData : p));
         if (selectedPost?.id === editingPostId) {
           setSelectedPost(postData);
         }
-      } else {
-        setPosts((prev) => [postData, ...prev]);
+      } catch (error) {
+        console.error("Error saving post:", error);
       }
-      
-      setIsWriteModalOpen(false);
-      
-      // Reset form
-      setNewTitle("");
-      setNewPublished(new Date().toISOString().split("T")[0]);
-      setNewLabelsStr("");
-      setNewContent("");
-      setNewUrl("");
-      setEditingPostId(null);
-    } catch (error) {
-      console.error("Error saving post:", error);
-      setFormError("保存に失敗しました。接続環境をご確認ください。");
-      handleFirestoreError(error, OperationType.WRITE, `posts/${targetId}`);
-    } finally {
+
+      handleCloseWriteModal();
       setIsSubmitting(false);
+      return;
     }
+
+    // Creating NEW post / feed item
+    const newItem: UnifiedFeedItem = {
+      item_id: "original-" + Date.now(),
+      source: 'blog_original',
+      posted_date: newPublished,
+      title: titleToSave,
+      body: newContent,
+      category: parsedLabels[0] || 'ブログ原本',
+      tags: parsedLabels.length > 0 ? parsedLabels : ['つぶやき'],
+      url: newUrl.trim() || undefined
+    };
+
+    const insertedId = await insertNewBlogOriginalInSupabase(newItem);
+    if (insertedId) {
+      newItem.item_id = insertedId;
+    }
+
+    setUnifiedFeed((prev) => [newItem, ...prev]);
+    setTotalFeedCount((prev) => prev + 1);
+
+    // Also write to Firestore
+    try {
+      const targetId = newItem.item_id;
+      const postData: BlogPost = {
+        id: targetId,
+        title: titleToSave || "無題",
+        published: newPublished,
+        content: newContent,
+        labels: parsedLabels.length > 0 ? parsedLabels : ["ブログ原本"],
+      };
+      if (newUrl.trim()) postData.url = newUrl.trim();
+      const docRef = doc(db, "posts", targetId);
+      await setDoc(docRef, postData);
+      setPosts((prev) => [postData, ...prev]);
+    } catch (error) {
+      console.warn("Secondary Firestore save:", error);
+    }
+
+    handleCloseWriteModal();
+    setIsSubmitting(false);
   };
+
 
   // Helper for source badges in Unified Feed
   const getSourceBadge = (source: string) => {
@@ -821,6 +934,16 @@ export default function App() {
                                   </span>
                                 )}
 
+                                {/* Edit Feed Item Button */}
+                                <button
+                                  onClick={(e) => handleEditFeedItemClick(item, e)}
+                                  title="この投稿を編集"
+                                  className="p-1.5 text-navy-600/80 hover:text-blue-700 hover:bg-blue-50 rounded border border-cream-300/80 hover:border-blue-200 transition cursor-pointer flex items-center gap-1 text-[11px] font-serif"
+                                >
+                                  <Edit className="w-3.5 h-3.5 text-blue-600" />
+                                  <span className="hidden sm:inline">編集</span>
+                                </button>
+
                                 {/* Delete Post Button */}
                                 <button
                                   onClick={(e) => handleDeleteFeedItemClick(item, e)}
@@ -831,6 +954,7 @@ export default function App() {
                                   <span className="hidden sm:inline">削除</span>
                                 </button>
                               </div>
+
                             </div>
 
                             {/* Title & Excerpt */}
@@ -1067,14 +1191,26 @@ export default function App() {
               </div>
 
               {/* Reader Footer */}
-              <div className="p-4 bg-cream-100 border-t border-cream-300 flex items-center justify-between text-xs font-serif">
-                <button
-                  onClick={(e) => handleDeleteFeedItemClick(selectedFeedItem, e)}
-                  className="bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-800 border border-red-200 py-1.5 px-3 rounded font-serif transition cursor-pointer flex items-center gap-1.5"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                  この投稿を削除
-                </button>
+              <div className="p-4 bg-cream-100 border-t border-cream-300 flex flex-wrap items-center justify-between gap-2 text-xs font-serif">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      handleEditFeedItemClick(selectedFeedItem, e);
+                    }}
+                    className="bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 py-1.5 px-3 rounded font-serif transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Edit className="w-3.5 h-3.5 text-blue-600" />
+                    編集
+                  </button>
+
+                  <button
+                    onClick={(e) => handleDeleteFeedItemClick(selectedFeedItem, e)}
+                    className="bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-800 border border-red-200 py-1.5 px-3 rounded font-serif transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                    削除
+                  </button>
+                </div>
 
                 <button
                   onClick={() => setSelectedFeedItem(null)}
@@ -1083,6 +1219,7 @@ export default function App() {
                   閉じる
                 </button>
               </div>
+
             </motion.div>
           </div>
         )}
@@ -1304,7 +1441,7 @@ export default function App() {
               <div className="flex items-center justify-between border-b border-cream-300 pb-3 shrink-0">
                 <h3 className="font-serif font-bold text-xl text-navy-800 flex items-center gap-2">
                   <Compass className="w-5 h-5 text-gold-500 animate-spin-slow" />
-                  {editingPostId ? "日記を編集する" : "新しい日記を執筆する"}
+                  {editingFeedItem ? "投稿を編集する" : editingPostId ? "日記を編集する" : "新しい記事・投稿を執筆する"}
                 </h3>
                 <button
                   onClick={handleCloseWriteModal}
@@ -1324,7 +1461,7 @@ export default function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-navy-800 mb-1">タイトル *</label>
+                    <label className="block text-xs font-bold text-navy-800 mb-1">タイトル (任意)</label>
                     <input
                       id="input-title"
                       type="text"
@@ -1348,7 +1485,7 @@ export default function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-navy-800 mb-1">ラベル / タグ (カンマ区切り) *</label>
+                    <label className="block text-xs font-bold text-navy-800 mb-1">ラベル / カテゴリ (カンマ区切り)</label>
                     <input
                       id="input-labels"
                       type="text"
@@ -1359,7 +1496,7 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-navy-800 mb-1">元ブログURL (任意)</label>
+                    <label className="block text-xs font-bold text-navy-800 mb-1">関連URL (任意)</label>
                     <input
                       id="input-url"
                       type="url"
@@ -1371,10 +1508,88 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Image Toolbar & Insertion Controls */}
+                <div className="bg-cream-100 border border-cream-300 rounded-lg p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-navy-800 flex items-center gap-1.5">
+                      <Image className="w-4 h-4 text-gold-600" />
+                      画像の挿入・添付
+                    </label>
+                    <span className="text-[10px] text-navy-500 font-mono">
+                      PCからファイル選択 / URL入力 / サンプル写真
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {/* File upload input */}
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleImageFileUpload}
+                        className="hidden"
+                        id="image-file-upload-input"
+                      />
+                      <label
+                        htmlFor="image-file-upload-input"
+                        className="w-full bg-cream-50 hover:bg-cream-200 text-navy-800 border border-dashed border-gold-500/60 hover:border-gold-600 rounded-lg py-2 px-3 text-xs font-serif flex items-center justify-center gap-2 cursor-pointer transition shadow-xs"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-gold-600" />
+                        PCから画像を選択して挿入
+                      </label>
+                    </div>
+
+                    {/* Image URL input */}
+                    <div className="flex gap-1.5">
+                      <input
+                        type="url"
+                        placeholder="https://... 画像URL"
+                        value={imageUrlInput}
+                        onChange={(e) => setImageUrlInput(e.target.value)}
+                        className="flex-1 bg-cream-50 border border-cream-300 focus:border-gold-500 rounded-lg px-2.5 py-1.5 text-xs outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleInsertImageUrl}
+                        disabled={!imageUrlInput.trim()}
+                        className="bg-navy-800 hover:bg-navy-900 disabled:opacity-40 text-cream-100 px-3 py-1.5 rounded-lg text-xs font-serif transition shrink-0 cursor-pointer"
+                      >
+                        挿入
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Preset Sample Photos */}
+                  <div className="pt-1.5 border-t border-cream-200/80">
+                    <span className="text-[10px] text-navy-600 font-serif block mb-1">
+                      1クリックで挿入できるサンプル写真 (宣教・風景):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { name: "🇧🇷 サンパウロ夕景", url: "https://images.unsplash.com/photo-1516306580123-e6e52b1b7b5f?auto=format&fit=crop&w=800&q=80", alt: "サンパウロの夕景" },
+                        { name: "🏙️ サンパウロ街並み", url: "https://images.unsplash.com/photo-1543059080-f9b1272213d5?auto=format&fit=crop&w=800&q=80", alt: "サンパウロ街並み" },
+                        { name: "📖 聖書・原典ノート", url: "https://images.unsplash.com/photo-1507842217343-583bb7270b66?auto=format&fit=crop&w=800&q=80", alt: "聖書とノート" },
+                        { name: "🤝 集い・フェローシップ", url: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=800&q=80", alt: "コミュニティの集い" },
+                      ].map((sample) => (
+                        <button
+                          key={sample.name}
+                          type="button"
+                          onClick={() => handleInsertSampleImage(sample.url, sample.alt)}
+                          className="bg-cream-200 hover:bg-cream-300 text-navy-800 text-[11px] font-serif px-2.5 py-1 rounded border border-cream-300/80 transition cursor-pointer flex items-center gap-1"
+                        >
+                          <Camera className="w-3 h-3 text-gold-600" />
+                          {sample.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex flex-col flex-1">
                   <div className="flex justify-between items-center mb-1">
                     <label className="block text-xs font-bold text-navy-800">本文 (Markdown対応) *</label>
-                    <span className="text-[10px] text-navy-500">##で見出し、*で斜体、**で強調が使えます</span>
+                    <span className="text-[10px] text-navy-500">##で見出し、*で斜体、**で強調、![説明](画像URL)で画像が表示できます</span>
                   </div>
                   <textarea
                     id="textarea-content"
@@ -1385,6 +1600,7 @@ export default function App() {
                     className="w-full bg-cream-100 border border-cream-300 focus:border-gold-500 rounded-lg p-3 text-xs outline-none transition resize-y font-sans leading-relaxed"
                   />
                 </div>
+
 
                 {/* Realtime Live Preview */}
                 {newContent.trim() && (

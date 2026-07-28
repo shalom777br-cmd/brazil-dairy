@@ -226,3 +226,91 @@ export async function fetchUnifiedFeed(
     totalCount: count || 0
   };
 }
+
+export async function updateFeedItemInSupabase(item: UnifiedFeedItem): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    if (item.source === 'blog_original') {
+      const content = item.title ? `# ${item.title}\n\n${item.body}` : item.body;
+      const { error } = await client
+        .from('x_post_queue')
+        .update({ content, posted_at: item.posted_date })
+        .eq('id', item.item_id);
+      return !error;
+    } else if (item.source === 'ameblo') {
+      const { error } = await client
+        .from('ameblo_posts')
+        .update({
+          title: item.title,
+          body_clean: item.body,
+          posted_at: item.posted_date,
+          category: item.category
+        })
+        .eq('id', item.item_id);
+      return !error;
+    } else if (item.source === 'brazil_diary') {
+      const { error } = await client
+        .from('brazil_diary_posts')
+        .update({
+          title: item.title,
+          body_clean: item.body,
+          posted_at: item.posted_date,
+          category: item.category
+        })
+        .eq('id', item.item_id);
+      return !error;
+    } else if (item.source === 'fc2_epata') {
+      const { error } = await client
+        .from('fc2_epata_blog_posts')
+        .update({
+          title: item.title,
+          body_clean: item.body,
+          posted_at: item.posted_date,
+          category: item.category
+        })
+        .eq('id', item.item_id);
+      return !error;
+    } else if (item.source === 'timeline') {
+      const { error } = await client
+        .from('memory_timeline_events')
+        .update({
+          title: item.title,
+          body: item.body,
+          event_date: item.posted_date,
+          primary_category: item.category
+        })
+        .eq('id', item.item_id);
+      return !error;
+    }
+  } catch (err) {
+    console.warn("Supabase update error:", err);
+  }
+  return false;
+}
+
+export async function insertNewBlogOriginalInSupabase(item: UnifiedFeedItem): Promise<string | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const content = item.title ? `# ${item.title}\n\n${item.body}` : item.body;
+    const { data, error } = await client
+      .from('x_post_queue')
+      .insert({
+        content,
+        posted_at: item.posted_date,
+        status: 'approved'
+      })
+      .select('id');
+
+    if (!error && data && data.length > 0) {
+      return String(data[0].id);
+    }
+  } catch (err) {
+    console.warn("Supabase insert error:", err);
+  }
+  return null;
+}
+
