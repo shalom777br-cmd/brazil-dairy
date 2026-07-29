@@ -65,6 +65,24 @@ export async function fetchUnifiedFeed(
   sourceFilter?: string,
   customKey?: string
 ) {
+  // Try server API first (which uses service role key to bypass RLS in production)
+  try {
+    const apiRes = await fetch(
+      `/api/feed?limit=${limit}&offset=${offset}&source=${sourceFilter || 'blog_original'}`
+    );
+    if (apiRes.ok) {
+      const data = await apiRes.json();
+      if (data && Array.isArray(data.items)) {
+        return {
+          items: data.items as UnifiedFeedItem[],
+          totalCount: data.totalCount || data.items.length,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("Server API fetch not available, falling back to direct Supabase client:", err);
+  }
+
   const client = getSupabaseClient(undefined, customKey);
   if (!client) {
     throw new Error("Supabase クライアントが初期化されていません。");
@@ -232,6 +250,20 @@ export async function fetchUnifiedFeed(
 }
 
 export async function updateFeedItemInSupabase(item: UnifiedFeedItem): Promise<boolean> {
+  try {
+    const apiRes = await fetch("/api/feed/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
+    });
+    if (apiRes.ok) {
+      const result = await apiRes.json();
+      if (result.success) return true;
+    }
+  } catch (err) {
+    console.warn("API update failed, attempting direct Supabase update:", err);
+  }
+
   const client = getSupabaseClient();
   if (!client) return false;
 
@@ -295,6 +327,20 @@ export async function updateFeedItemInSupabase(item: UnifiedFeedItem): Promise<b
 }
 
 export async function insertNewBlogOriginalInSupabase(item: UnifiedFeedItem): Promise<string | null> {
+  try {
+    const apiRes = await fetch("/api/feed/insert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
+    });
+    if (apiRes.ok) {
+      const result = await apiRes.json();
+      if (result.success && result.id) return String(result.id);
+    }
+  } catch (err) {
+    console.warn("API insert failed, attempting direct Supabase insert:", err);
+  }
+
   const client = getSupabaseClient();
   if (!client) return null;
 
