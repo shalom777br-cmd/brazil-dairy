@@ -803,12 +803,12 @@ export default function App() {
             {/* Source Filter Tabs */}
             <div className="flex flex-wrap gap-2">
               {[
+                { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
                 { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
                 { id: 'timeline', label: '年表 (120)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
                 { id: 'fc2_epata', label: 'FC2 エパタ (913)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
                 { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
                 { id: 'ameblo', label: 'Ameblo (715)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
-                { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
               ].map((tab) => {
                 const isActive = selectedSourceFilter === tab.id;
                 return (

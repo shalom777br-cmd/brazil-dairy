@@ -145,7 +145,11 @@ export async function fetchUnifiedFeed(
         }
       }
 
-      items.sort((a, b) => (b.posted_date || '').localeCompare(a.posted_date || ''));
+      items.sort((a, b) => {
+        if (a.source === 'blog_original' && b.source !== 'blog_original') return -1;
+        if (b.source === 'blog_original' && a.source !== 'blog_original') return 1;
+        return (b.posted_date || '').localeCompare(a.posted_date || '');
+      });
       return {
         items: items.slice(0, limit),
         totalCount: (count || 0) + items.length - data.length
