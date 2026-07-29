@@ -119,7 +119,7 @@ export default function App() {
   // Unified Feed State
   const [unifiedFeed, setUnifiedFeed] = useState<UnifiedFeedItem[]>([]);
   const [isFeedLoading, setIsFeedLoading] = useState(true);
-  const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('all');
+  const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('blog_original');
   const [feedOffset, setFeedOffset] = useState<number>(0);
   const [hasMoreFeed, setHasMoreFeed] = useState<boolean>(true);
   const [totalFeedCount, setTotalFeedCount] = useState<number>(0);
@@ -161,44 +161,86 @@ export default function App() {
   };
 
 
-  const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'all', append = false) => {
+  const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'blog_original', append = false) => {
     setIsFeedLoading(true);
     try {
-      const res = await fetchUnifiedFeed(50, offset, sourceFilter);
-      if (res && res.items) {
-        if (append) {
-          setUnifiedFeed((prev) => [...prev, ...res.items]);
-        } else {
-          setUnifiedFeed(res.items);
+      let fetchedItems: UnifiedFeedItem[] = [];
+      let dbTotalCount = 0;
+
+      try {
+        const res = await fetchUnifiedFeed(50, offset, sourceFilter);
+        if (res && res.items) {
+          fetchedItems = res.items;
+          dbTotalCount = res.totalCount;
         }
-        setTotalFeedCount(res.totalCount);
-        setHasMoreFeed(offset + res.items.length < res.totalCount);
+      } catch (err) {
+        console.warn("Supabase feed fetch notice:", err);
       }
-    } catch (err) {
-      console.warn("Supabase unified feed fetch failed, using fallback:", err);
-      const fallbackItems: UnifiedFeedItem[] = importedPosts.map((p, idx) => ({
-        item_id: p.id || `fallback-${idx}`,
-        source: 'brazil_diary',
-        posted_date: p.published ? p.published.split('T')[0] : '2011-01-01',
-        title: p.title || '無題',
+
+      // Map local Firestore posts to UnifiedFeedItems for blog_original
+      const firestorePostsSource = posts && posts.length > 0 ? posts : importedPosts;
+      const firestoreOriginals: UnifiedFeedItem[] = firestorePostsSource.map((p, idx) => ({
+        item_id: String(p.id || `post-${idx}`),
+        source: 'blog_original',
+        posted_date: p.published ? p.published.split('T')[0] : '2026-07-28',
+        title: p.title || null,
         body: p.content || '',
         url: p.url,
-        tags: p.labels || ['ブラジル日記'],
-        category: p.labels && p.labels.length > 0 ? p.labels[0] : 'ブラジル日記'
+        tags: p.labels && p.labels.length > 0 ? p.labels : ['つぶやき'],
+        category: p.labels && p.labels[0] ? p.labels[0] : 'ブログ原本'
       }));
 
-      let filtered = fallbackItems;
-      if (sourceFilter !== 'all' && sourceFilter !== 'brazil_diary') {
-        filtered = [];
-      }
+      if (sourceFilter === 'blog_original') {
+        const itemMap = new Map<string, UnifiedFeedItem>();
+        // Add firestore originals first
+        firestoreOriginals.forEach(item => itemMap.set(item.item_id, item));
+        // Add fetched items from Supabase
+        fetchedItems.forEach(item => itemMap.set(item.item_id, item));
 
-      if (append) {
-        setUnifiedFeed((prev) => [...prev, ...filtered]);
+        const merged = Array.from(itemMap.values());
+        merged.sort((a, b) => (b.posted_date || '').localeCompare(a.posted_date || ''));
+
+        if (append) {
+          setUnifiedFeed((prev) => [...prev, ...merged]);
+        } else {
+          setUnifiedFeed(merged);
+        }
+        setTotalFeedCount(merged.length);
+        setHasMoreFeed(false);
+      } else if (sourceFilter === 'all') {
+        const itemMap = new Map<string, UnifiedFeedItem>();
+        fetchedItems.forEach(item => itemMap.set(item.item_id, item));
+        firestoreOriginals.forEach(item => {
+          if (!itemMap.has(item.item_id)) {
+            itemMap.set(item.item_id, item);
+          }
+        });
+
+        const merged = Array.from(itemMap.values());
+        merged.sort((a, b) => {
+          if (a.source === 'blog_original' && b.source !== 'blog_original') return -1;
+          if (b.source === 'blog_original' && a.source !== 'blog_original') return 1;
+          return (b.posted_date || '').localeCompare(a.posted_date || '');
+        });
+
+        if (append) {
+          setUnifiedFeed((prev) => [...prev, ...merged]);
+        } else {
+          setUnifiedFeed(merged);
+        }
+        setTotalFeedCount(dbTotalCount + firestoreOriginals.length);
+        setHasMoreFeed(offset + fetchedItems.length < dbTotalCount);
       } else {
-        setUnifiedFeed(filtered);
+        if (append) {
+          setUnifiedFeed((prev) => [...prev, ...fetchedItems]);
+        } else {
+          setUnifiedFeed(fetchedItems);
+        }
+        setTotalFeedCount(dbTotalCount);
+        setHasMoreFeed(offset + fetchedItems.length < dbTotalCount);
       }
-      setTotalFeedCount(filtered.length);
-      setHasMoreFeed(false);
+    } catch (err) {
+      console.warn("Unified feed error fallback:", err);
     } finally {
       setIsFeedLoading(false);
     }
@@ -268,6 +310,12 @@ export default function App() {
     setFeedOffset(0);
     loadUnifiedFeedData(0, selectedSourceFilter, false);
   }, [selectedSourceFilter]);
+
+  useEffect(() => {
+    if (posts && posts.length > 0) {
+      loadUnifiedFeedData(0, selectedSourceFilter, false);
+    }
+  }, [posts]);
 
   const fetchPosts = async () => {
     setIsLoading(true);
