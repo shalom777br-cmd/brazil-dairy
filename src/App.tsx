@@ -255,6 +255,7 @@ export default function App() {
 
   // Load Admin status & Unified Feed
   useEffect(() => {
+    document.title = "ブラジル日記";
     const savedAdmin = localStorage.getItem("brazil_blog_admin");
     if (savedAdmin === "true") {
       setIsAdmin(true);
