@@ -13,8 +13,9 @@ app.use(express.json({ limit: "10mb" }));
 
 // Initialize Supabase admin client using service role key if available
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cyzfspgnybrdgvmokhth.supabase.co";
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-const supabase = supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5emZzcGdueWJyZGd2bW9raHRoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTYzNTMxMSwiZXhwIjoyMDk3MjExMzExfQ.91U98ih-KIDgQT80gWDCKww4ACcyzrSnx3jo_TsIum4";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 function parseOriginalContent(content: string, itemTitle?: string | null) {
   if (!content) return { title: itemTitle || null, body: "" };

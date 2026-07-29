@@ -4,15 +4,12 @@ let supabaseInstance: SupabaseClient | null = null;
 
 export const DEFAULT_SUPABASE_PROJECT = "cyzfspgnybrdgvmokhth";
 export const DEFAULT_SUPABASE_URL = `https://${DEFAULT_SUPABASE_PROJECT}.supabase.co`;
+export const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5emZzcGdueWJyZGd2bW9raHRoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTYzNTMxMSwiZXhwIjoyMDk3MjExMzExfQ.91U98ih-KIDgQT80gWDCKww4ACcyzrSnx3jo_TsIum4";
 
 export function getSupabaseClient(customUrl?: string, customKey?: string): SupabaseClient | null {
   const env = (import.meta as any).env || {};
   const url = customUrl || env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
-  const key = customKey || env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!key) {
-    return null;
-  }
+  const key = customKey || env.SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_KEY;
 
   if (!supabaseInstance || customUrl || customKey) {
     supabaseInstance = createClient(url, key);
