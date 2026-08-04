@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Rounded Green Container -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#13302b" stroke="#0f2622" stroke-width="2"/>
+  <rect x="5" y="5" width="54" height="54" rx="11" fill="#009c3b"/>
+  <!-- Yellow Diamond -->
+  <polygon points="32,12 55,32 32,52 9,32" fill="#ffdf00"/>
+  <!-- Blue Globe -->
+  <circle cx="32" cy="32" r="11" fill="#002776"/>
+  <!-- White Curved Band -->
+  <path d="M 21.5 31.5 C 26 28.5, 38 28.5, 42.5 32.5 C 41 34.5, 24 33.5, 21.5 31.5 Z" fill="#ffffff" opacity="0.95"/>
+</svg>

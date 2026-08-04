@@ -178,7 +178,8 @@ export default function App() {
       }
 
       // Map local Firestore posts to UnifiedFeedItems for blog_original
-      const firestorePostsSource = posts && posts.length > 0 ? posts : importedPosts;
+      const realPosts = (posts || []).filter(p => p.id && !p.id.startsWith("dummy-"));
+      const firestorePostsSource = realPosts.length > 0 ? realPosts : importedPosts;
       const firestoreOriginals: UnifiedFeedItem[] = firestorePostsSource.map((p, idx) => ({
         item_id: String(p.id || `post-${idx}`),
         source: 'blog_original',
@@ -323,31 +324,19 @@ export default function App() {
       const q = query(collection(db, "posts"), orderBy("published", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedPosts: BlogPost[] = [];
-      querySnapshot.forEach((doc) => {
-        fetchedPosts.push({ id: doc.id, ...doc.data() } as BlogPost);
+      querySnapshot.forEach((docSnap) => {
+        if (docSnap.id.startsWith("dummy-")) {
+          // Clean up legacy dummy doc from Firestore
+          deleteDoc(doc(db, "posts", docSnap.id)).catch(() => {});
+        } else {
+          fetchedPosts.push({ id: docSnap.id, ...docSnap.data() } as BlogPost);
+        }
       });
 
-      if (fetchedPosts.length === 0) {
-        // Automatically insert dummy data into Firestore so the user has immediate content
-        const promises = dummyPosts.map(async (post) => {
-          const docRef = doc(db, "posts", post.id);
-          await setDoc(docRef, post);
-          return post;
-        });
-        await Promise.all(promises);
-        setPosts(dummyPosts);
-      } else {
-        setPosts(fetchedPosts);
-      }
+      setPosts(fetchedPosts);
     } catch (error) {
       console.error("Error fetching posts:", error);
-      // Fallback to local dummy data if firebase query fails or is not ready
-      setPosts(dummyPosts);
-      try {
-        handleFirestoreError(error, OperationType.LIST, "posts");
-      } catch (e) {
-        // Suppress re-throw in list to let the app function with fallback data gracefully
-      }
+      setPosts([]);
     } finally {
       setIsLoading(false);
     }
