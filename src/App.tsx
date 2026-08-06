@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { collection, getDocs, addDoc, query, orderBy, setDoc, doc, deleteDoc } from "firebase/firestore";
 import { db } from "./lib/firebase";
 import { BlogPost } from "./types";
@@ -32,7 +32,9 @@ import {
   Image,
   Upload,
   Camera,
-  Link2
+  Link2,
+  Archive,
+  ChevronDown
 } from "lucide-react";
 import { SupabaseModal } from "./components/SupabaseModal";
 import { fetchUnifiedFeed, UnifiedFeedItem, updateFeedItemInSupabase, insertNewBlogOriginalInSupabase } from "./lib/supabase";
@@ -120,6 +122,8 @@ export default function App() {
   const [unifiedFeed, setUnifiedFeed] = useState<UnifiedFeedItem[]>([]);
   const [isFeedLoading, setIsFeedLoading] = useState(true);
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('blog_original');
+  const [selectedMonthFilter, setSelectedMonthFilter] = useState<string | null>(null);
+  const [expandedYears, setExpandedYears] = useState<string[]>([]);
   const [feedOffset, setFeedOffset] = useState<number>(0);
   const [hasMoreFeed, setHasMoreFeed] = useState<boolean>(true);
   const [totalFeedCount, setTotalFeedCount] = useState<number>(0);
@@ -654,8 +658,47 @@ export default function App() {
       (item.tags && selectedLabels.every((label) => item.tags?.includes(label))) ||
       (item.category && selectedLabels.includes(item.category));
 
-    return matchesSearch && matchesLabels;
+    const matchesMonth =
+      !selectedMonthFilter ||
+      (item.posted_date && item.posted_date.startsWith(selectedMonthFilter));
+
+    return matchesSearch && matchesLabels && matchesMonth;
   });
+
+  // Calculate Monthly Archives (Grouping unifiedFeed by Year and Month)
+  const monthlyArchives = useMemo(() => {
+    const map: { [year: string]: { [month: string]: number } } = {};
+    unifiedFeed.forEach((item) => {
+      if (!item.posted_date) return;
+      const parts = item.posted_date.split("-");
+      if (parts.length >= 2) {
+        const year = parts[0];
+        const month = parts[1];
+        if (!map[year]) map[year] = {};
+        map[year][month] = (map[year][month] || 0) + 1;
+      }
+    });
+
+    const sortedYears = Object.keys(map).sort((a, b) => b.localeCompare(a));
+    return sortedYears.map((year) => {
+      const months = Object.keys(map[year])
+        .sort((a, b) => b.localeCompare(a))
+        .map((m) => ({
+          monthKey: `${year}-${m}`,
+          year,
+          monthNum: parseInt(m, 10),
+          count: map[year][m]
+        }));
+      const yearTotal = months.reduce((sum, m) => sum + m.count, 0);
+      return { year, yearTotal, months };
+    });
+  }, [unifiedFeed]);
+
+  const toggleYearExpand = (year: string) => {
+    setExpandedYears((prev) =>
+      prev.includes(year) ? prev.filter((y) => y !== year) : [...prev, year]
+    );
+  };
 
   // Group Unified Feed Items by Year
   const feedByYear: { [year: string]: UnifiedFeedItem[] } = {};
@@ -868,12 +911,13 @@ export default function App() {
           </div>
 
           {/* Active Filters Summary */}
-          {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all') && (
+          {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all' || selectedMonthFilter) && (
             <div className="mb-6 p-4 bg-cream-200 border border-cream-300 rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-navy-700 font-serif font-medium">
                   現在の絞り込み: 
                   {selectedSourceFilter !== 'all' && ` [ソース: ${getSourceBadge(selectedSourceFilter).label}]`}
+                  {selectedMonthFilter && ` [アーカイブ: ${selectedMonthFilter.split('-')[0]}年${parseInt(selectedMonthFilter.split('-')[1], 10)}月]`}
                   {searchQuery && ` [キーワード: 「${searchQuery}」]`} 
                   {selectedLabels.length > 0 && ` [タグ: ${selectedLabels.join(", ")}]`}
                 </span>
@@ -886,6 +930,7 @@ export default function App() {
                   setSearchQuery("");
                   setSelectedLabels([]);
                   setSelectedSourceFilter("all");
+                  setSelectedMonthFilter(null);
                 }}
                 className="text-xs text-gold-700 hover:text-gold-600 underline flex items-center gap-1 cursor-pointer font-serif"
               >
@@ -1093,6 +1138,78 @@ export default function App() {
               />
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-navy-600/40" />
             </div>
+          </div>
+
+          {/* Monthly Archive Card */}
+          <div className="bg-cream-50 border border-cream-300 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-cream-300 pb-2">
+              <h3 className="font-serif font-bold text-navy-800 flex items-center gap-2">
+                <Archive className="w-4 h-4 text-gold-500" />
+                月別アーカイブ
+              </h3>
+              {selectedMonthFilter && (
+                <button
+                  onClick={() => setSelectedMonthFilter(null)}
+                  className="text-[10px] text-gold-700 hover:text-gold-600 underline font-serif cursor-pointer"
+                >
+                  選択解除
+                </button>
+              )}
+            </div>
+
+            {isFeedLoading && unifiedFeed.length === 0 ? (
+              <div className="h-16 flex items-center justify-center">
+                <span className="text-xs text-navy-600/40 font-serif">読み込み中...</span>
+              </div>
+            ) : monthlyArchives.length === 0 ? (
+              <p className="text-xs text-navy-600/40 font-serif">アーカイブがありません。</p>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {monthlyArchives.map(({ year, yearTotal, months }) => {
+                  const isYearOpen = expandedYears.length === 0 || expandedYears.includes(year) || selectedMonthFilter?.startsWith(year);
+                  return (
+                    <div key={year} className="border border-cream-200/90 rounded-lg overflow-hidden bg-cream-100/60">
+                      <button
+                        onClick={() => toggleYearExpand(year)}
+                        className="w-full px-3 py-2 flex items-center justify-between text-xs font-serif font-bold text-navy-900 hover:bg-cream-200/80 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <ChevronDown className={`w-3.5 h-3.5 text-gold-600 transition-transform duration-200 ${isYearOpen ? '' : '-rotate-90'}`} />
+                          <span>{year}年</span>
+                        </div>
+                        <span className="text-[10px] font-mono font-normal text-navy-600/70 bg-cream-200 px-2 py-0.5 rounded-full">
+                          {yearTotal}件
+                        </span>
+                      </button>
+
+                      {isYearOpen && (
+                        <div className="px-3 pb-2 pt-1 grid grid-cols-2 gap-1.5 border-t border-cream-200/60 bg-cream-50">
+                          {months.map(({ monthKey, monthNum, count }) => {
+                            const isSelected = selectedMonthFilter === monthKey;
+                            return (
+                              <button
+                                key={monthKey}
+                                onClick={() => setSelectedMonthFilter(isSelected ? null : monthKey)}
+                                className={`px-2 py-1 rounded text-xs font-serif flex items-center justify-between transition cursor-pointer border ${
+                                  isSelected
+                                    ? "bg-navy-900 text-gold-400 border-navy-900 font-bold shadow-sm ring-1 ring-gold-500/40"
+                                    : "bg-cream-100 hover:bg-cream-200 text-navy-800 border-cream-300/60"
+                                }`}
+                              >
+                                <span>{monthNum}月</span>
+                                <span className={`text-[10px] font-mono ${isSelected ? 'text-gold-300' : 'text-navy-600/60'}`}>
+                                  ({count})
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Tags Cloud Card */}
