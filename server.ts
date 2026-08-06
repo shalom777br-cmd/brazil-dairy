@@ -11,16 +11,32 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
 
-// Serve public static assets (favicons, icons, etc.)
+// Serve public and dist static assets (favicons, icons, etc.)
 app.use(express.static(path.join(process.cwd(), "public")));
+app.use(express.static(path.join(process.cwd(), "dist")));
 
-app.get("/favicon.ico", (req, res) => {
-  const icoPath = path.join(process.cwd(), "public", "favicon.ico");
-  const distIco = path.join(process.cwd(), "dist", "favicon.ico");
-  res.sendFile(icoPath, (err) => {
-    if (err) res.sendFile(distIco, () => res.status(404).end());
-  });
-});
+const serveFaviconFile = (fileName: string, contentType: string) => {
+  return (req: express.Request, res: express.Response) => {
+    const pubPath = path.join(process.cwd(), "public", fileName);
+    const distPath = path.join(process.cwd(), "dist", fileName);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.sendFile(pubPath, (err) => {
+      if (err) {
+        res.sendFile(distPath, (err2) => {
+          if (err2) res.status(404).end();
+        });
+      }
+    });
+  };
+};
+
+app.get("/favicon.ico", serveFaviconFile("favicon.ico", "image/x-icon"));
+app.get("/favicon.svg", serveFaviconFile("favicon.svg", "image/svg+xml"));
+app.get("/favicon.png", serveFaviconFile("favicon.png", "image/png"));
+app.get("/favicon-32x32.png", serveFaviconFile("favicon-32x32.png", "image/png"));
+app.get("/favicon-16x16.png", serveFaviconFile("favicon-16x16.png", "image/png"));
+app.get("/apple-touch-icon.png", serveFaviconFile("apple-touch-icon.png", "image/png"));
 
 // Initialize Supabase admin client using service role key if available
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cyzfspgnybrdgvmokhth.supabase.co";
