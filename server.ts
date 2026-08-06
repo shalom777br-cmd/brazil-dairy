@@ -11,6 +11,17 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
 
+// Serve public static assets (favicons, icons, etc.)
+app.use(express.static(path.join(process.cwd(), "public")));
+
+app.get("/favicon.ico", (req, res) => {
+  const icoPath = path.join(process.cwd(), "public", "favicon.ico");
+  const distIco = path.join(process.cwd(), "dist", "favicon.ico");
+  res.sendFile(icoPath, (err) => {
+    if (err) res.sendFile(distIco, () => res.status(404).end());
+  });
+});
+
 // Initialize Supabase admin client using service role key if available
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cyzfspgnybrdgvmokhth.supabase.co";
 const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5emZzcGdueWJyZGd2bW9raHRoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTYzNTMxMSwiZXhwIjoyMDk3MjExMzExfQ.91U98ih-KIDgQT80gWDCKww4ACcyzrSnx3jo_TsIum4";
