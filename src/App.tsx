@@ -122,7 +122,9 @@ export default function App() {
   const [unifiedFeed, setUnifiedFeed] = useState<UnifiedFeedItem[]>([]);
   const [isFeedLoading, setIsFeedLoading] = useState(true);
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('blog_original');
+  const [selectedYearFilter, setSelectedYearFilter] = useState<string | null>(null);
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [expandedYears, setExpandedYears] = useState<string[]>([]);
   const [feedOffset, setFeedOffset] = useState<number>(0);
   const [hasMoreFeed, setHasMoreFeed] = useState<boolean>(true);
@@ -172,7 +174,7 @@ export default function App() {
       let dbTotalCount = 0;
 
       try {
-        const res = await fetchUnifiedFeed(50, offset, sourceFilter);
+        const res = await fetchUnifiedFeed(1500, offset, sourceFilter);
         if (res && res.items) {
           fetchedItems = res.items;
           dbTotalCount = res.totalCount;
@@ -658,16 +660,20 @@ export default function App() {
       (item.tags && selectedLabels.every((label) => item.tags?.includes(label))) ||
       (item.category && selectedLabels.includes(item.category));
 
-    const matchesMonth =
-      !selectedMonthFilter ||
-      (item.posted_date && item.posted_date.startsWith(selectedMonthFilter));
+    const matchesMonth = selectedMonthFilter
+      ? (item.posted_date && item.posted_date.startsWith(selectedMonthFilter))
+      : selectedYearFilter
+      ? (item.posted_date && item.posted_date.startsWith(selectedYearFilter))
+      : true;
 
     return matchesSearch && matchesLabels && matchesMonth;
   });
 
-  // Calculate Monthly Archives (Grouping unifiedFeed by Year and Month)
-  const monthlyArchives = useMemo(() => {
+  // Calculate Monthly Archives (Grouping unifiedFeed by Year and 12-Month grid)
+  const { monthlyArchives, yearList } = useMemo(() => {
     const map: { [year: string]: { [month: string]: number } } = {};
+    const yearTotalsMap: { [year: string]: number } = {};
+
     unifiedFeed.forEach((item) => {
       if (!item.posted_date) return;
       const parts = item.posted_date.split("-");
@@ -676,23 +682,36 @@ export default function App() {
         const month = parts[1];
         if (!map[year]) map[year] = {};
         map[year][month] = (map[year][month] || 0) + 1;
+        yearTotalsMap[year] = (yearTotalsMap[year] || 0) + 1;
       }
     });
 
-    const sortedYears = Object.keys(map).sort((a, b) => b.localeCompare(a));
-    return sortedYears.map((year) => {
-      const months = Object.keys(map[year])
-        .sort((a, b) => b.localeCompare(a))
-        .map((m) => ({
-          monthKey: `${year}-${m}`,
+    const sortedYears = Object.keys(map).sort((a, b) =>
+      sortOrder === 'desc' ? b.localeCompare(a) : a.localeCompare(b)
+    );
+    
+    const archives = sortedYears.map((year) => {
+      const months = Array.from({ length: 12 }, (_, i) => {
+        const mNum = i + 1;
+        const mStr = mNum < 10 ? `0${mNum}` : `${mNum}`;
+        return {
+          monthKey: `${year}-${mStr}`,
           year,
-          monthNum: parseInt(m, 10),
-          count: map[year][m]
-        }));
-      const yearTotal = months.reduce((sum, m) => sum + m.count, 0);
-      return { year, yearTotal, months };
+          monthNum: mNum,
+          monthStr: mStr,
+          count: map[year][mStr] || 0
+        };
+      });
+      return { year, yearTotal: yearTotalsMap[year] || 0, months };
     });
-  }, [unifiedFeed]);
+
+    const yList = sortedYears.map((year) => ({
+      year,
+      total: yearTotalsMap[year] || 0
+    }));
+
+    return { monthlyArchives: archives, yearList: yList };
+  }, [unifiedFeed, sortOrder]);
 
   const toggleYearExpand = (year: string) => {
     setExpandedYears((prev) =>
@@ -710,7 +729,22 @@ export default function App() {
     feedByYear[year].push(item);
   });
 
-  const sortedFeedYears = Object.keys(feedByYear).sort((a, b) => b.localeCompare(a));
+  // Sort items inside each year by date
+  Object.keys(feedByYear).forEach((year) => {
+    feedByYear[year].sort((a, b) => {
+      const dateA = a.posted_date || "";
+      const dateB = b.posted_date || "";
+      return sortOrder === 'desc'
+        ? dateB.localeCompare(dateA)
+        : dateA.localeCompare(dateB);
+    });
+  });
+
+  const sortedFeedYears = Object.keys(feedByYear).sort((a, b) => {
+    if (a === "その他") return 1;
+    if (b === "その他") return -1;
+    return sortOrder === 'desc' ? b.localeCompare(a) : a.localeCompare(b);
+  });
 
   // Extract unique labels from posts & unified feed
   const allLabels = Array.from(
@@ -875,8 +909,33 @@ export default function App() {
                 <Compass className="w-4 h-4 text-gold-600" />
                 統合フィードソース (<code className="text-xs text-gold-700 font-mono">blog_unified_feed</code>)
               </div>
-              <div className="flex items-center gap-2 text-xs text-navy-700 font-mono">
-                <span>表示件数: {filteredFeedItems.length} / {totalFeedCount} 件</span>
+              <div className="flex items-center gap-3 text-xs text-navy-700">
+                <div className="flex items-center gap-1 bg-cream-200/90 p-1 rounded-lg border border-cream-300">
+                  <span className="text-[11px] font-serif font-semibold text-navy-800 px-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-gold-600" /> 並び順:
+                  </span>
+                  <button
+                    onClick={() => setSortOrder('desc')}
+                    className={`px-2.5 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
+                      sortOrder === 'desc'
+                        ? 'bg-navy-900 text-gold-400 shadow-sm'
+                        : 'text-navy-700 hover:bg-cream-300/60'
+                    }`}
+                  >
+                    新しい順 (降順)
+                  </button>
+                  <button
+                    onClick={() => setSortOrder('asc')}
+                    className={`px-2.5 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
+                      sortOrder === 'asc'
+                        ? 'bg-navy-900 text-gold-400 shadow-sm'
+                        : 'text-navy-700 hover:bg-cream-300/60'
+                    }`}
+                  >
+                    古い順 (昇順)
+                  </button>
+                </div>
+                <span className="font-mono">表示: {filteredFeedItems.length} / {totalFeedCount} 件</span>
                 {isFeedLoading && <RefreshCw className="w-3.5 h-3.5 text-gold-500 animate-spin" />}
               </div>
             </div>
@@ -910,14 +969,174 @@ export default function App() {
             </div>
           </div>
 
+          {/* Year and Month Grid Navigation (Reference UI pattern) */}
+          <div className="mb-6 bg-cream-50 border border-gold-500/30 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-cream-300 pb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-gold-600" />
+                <h3 className="font-serif font-bold text-navy-900 text-sm">
+                  月別・年別記事ナビゲーション
+                </h3>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-serif flex-wrap">
+                <div className="flex items-center gap-1 bg-cream-100/90 p-0.5 rounded-md border border-cream-300">
+                  <button
+                    onClick={() => setSortOrder('desc')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
+                      sortOrder === 'desc'
+                        ? 'bg-navy-900 text-gold-400'
+                        : 'text-navy-700 hover:bg-cream-200'
+                    }`}
+                  >
+                    新しい順
+                  </button>
+                  <button
+                    onClick={() => setSortOrder('asc')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
+                      sortOrder === 'asc'
+                        ? 'bg-navy-900 text-gold-400'
+                        : 'text-navy-700 hover:bg-cream-200'
+                    }`}
+                  >
+                    古い順
+                  </button>
+                </div>
+                {(selectedYearFilter || selectedMonthFilter) && (
+                  <button
+                    onClick={() => {
+                      setSelectedYearFilter(null);
+                      setSelectedMonthFilter(null);
+                    }}
+                    className="text-gold-700 hover:text-gold-600 underline cursor-pointer"
+                  >
+                    全期間を表示
+                  </button>
+                )}
+                {selectedYearFilter && (
+                  <span className="bg-navy-900 text-gold-400 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono">
+                    {selectedYearFilter}年 {selectedMonthFilter ? `${parseInt(selectedMonthFilter.split('-')[1], 10)}月` : '全月'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Year Selector Grid (Row of Year Buttons) */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-serif text-navy-700 font-semibold block">
+                年を選択:
+              </label>
+              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 bg-cream-100/70 rounded-lg border border-cream-200">
+                <button
+                  onClick={() => {
+                    setSelectedYearFilter(null);
+                    setSelectedMonthFilter(null);
+                  }}
+                  className={`px-3 py-1 rounded text-xs font-serif font-medium transition cursor-pointer border ${
+                    !selectedYearFilter && !selectedMonthFilter
+                      ? "bg-navy-900 text-gold-400 border-navy-900 shadow-sm font-bold"
+                      : "bg-cream-50 hover:bg-cream-200 text-navy-800 border-cream-300"
+                  }`}
+                >
+                  全期間
+                </button>
+                {yearList.map(({ year, total }) => {
+                  const isYearSelected = selectedYearFilter === year || selectedMonthFilter?.startsWith(year);
+                  return (
+                    <button
+                      key={year}
+                      onClick={() => {
+                        setSelectedYearFilter(year);
+                        // If selected month was in another year, clear month filter
+                        if (selectedMonthFilter && !selectedMonthFilter.startsWith(year)) {
+                          setSelectedMonthFilter(null);
+                        }
+                      }}
+                      className={`px-3 py-1 rounded text-xs font-serif transition flex items-center gap-1 cursor-pointer border ${
+                        isYearSelected
+                          ? "bg-navy-950 text-gold-400 border-navy-900 shadow-sm font-bold ring-1 ring-gold-500/40"
+                          : "bg-cream-50 hover:bg-cream-200 text-navy-800 border-cream-300"
+                      }`}
+                    >
+                      <span>{year}年</span>
+                      <span className={`text-[10px] font-mono ${isYearSelected ? 'text-gold-300' : 'text-navy-600/60'}`}>
+                        ({total})
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 12-Month Selector Grid for active year */}
+            {(() => {
+              const activeYear = selectedYearFilter || selectedMonthFilter?.split('-')[0] || (yearList.length > 0 ? yearList[0].year : null);
+              const activeArchiveObj = monthlyArchives.find((a) => a.year === activeYear);
+
+              if (!activeYear || !activeArchiveObj) return null;
+
+              return (
+                <div className="space-y-2 pt-2 border-t border-cream-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-serif text-navy-700 font-semibold">
+                      {activeYear}年の月を選択 (1月〜12月):
+                    </label>
+                    {selectedMonthFilter && selectedMonthFilter.startsWith(activeYear) && (
+                      <button
+                        onClick={() => setSelectedMonthFilter(null)}
+                        className="text-[10px] text-navy-600 hover:text-navy-900 underline font-serif cursor-pointer"
+                      >
+                        {activeYear}年の全記事を表示
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 12 Month Grid Buttons (2 rows of 6 cols on md, 3x4 on mobile) */}
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                    {activeArchiveObj.months.map(({ monthKey, monthNum, count }) => {
+                      const isMonthSelected = selectedMonthFilter === monthKey;
+                      const hasArticles = count > 0;
+
+                      return (
+                        <button
+                          key={monthKey}
+                          disabled={!hasArticles}
+                          onClick={() => {
+                            if (!hasArticles) return;
+                            setSelectedYearFilter(activeYear);
+                            setSelectedMonthFilter(isMonthSelected ? null : monthKey);
+                          }}
+                          className={`py-2 px-2 rounded-lg text-xs font-serif flex flex-col items-center justify-center transition border ${
+                            isMonthSelected
+                              ? "bg-navy-900 text-gold-400 border-navy-900 shadow-md font-bold ring-2 ring-gold-500/60 cursor-pointer"
+                              : hasArticles
+                              ? "bg-cream-100 hover:bg-cream-200 text-navy-900 border-cream-300 hover:border-gold-400/60 cursor-pointer"
+                              : "bg-cream-100/40 text-navy-400/40 border-cream-200/50 cursor-not-allowed"
+                          }`}
+                        >
+                          <span className="font-bold">{monthNum}月</span>
+                          <span className={`text-[10px] font-mono mt-0.5 ${
+                            isMonthSelected ? "text-gold-300" : hasArticles ? "text-navy-600" : "text-navy-400/40"
+                          }`}>
+                            {hasArticles ? `${count}件` : "0件"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
           {/* Active Filters Summary */}
-          {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all' || selectedMonthFilter) && (
+          {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all' || selectedYearFilter || selectedMonthFilter) && (
             <div className="mb-6 p-4 bg-cream-200 border border-cream-300 rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-navy-700 font-serif font-medium">
                   現在の絞り込み: 
                   {selectedSourceFilter !== 'all' && ` [ソース: ${getSourceBadge(selectedSourceFilter).label}]`}
-                  {selectedMonthFilter && ` [アーカイブ: ${selectedMonthFilter.split('-')[0]}年${parseInt(selectedMonthFilter.split('-')[1], 10)}月]`}
+                  {selectedYearFilter && !selectedMonthFilter && ` [年: ${selectedYearFilter}年]` }
+                  {selectedMonthFilter && ` [年月: ${selectedMonthFilter.split('-')[0]}年${parseInt(selectedMonthFilter.split('-')[1], 10)}月]` }
                   {searchQuery && ` [キーワード: 「${searchQuery}」]`} 
                   {selectedLabels.length > 0 && ` [タグ: ${selectedLabels.join(", ")}]`}
                 </span>
@@ -930,6 +1149,7 @@ export default function App() {
                   setSearchQuery("");
                   setSelectedLabels([]);
                   setSelectedSourceFilter("all");
+                  setSelectedYearFilter(null);
                   setSelectedMonthFilter(null);
                 }}
                 className="text-xs text-gold-700 hover:text-gold-600 underline flex items-center gap-1 cursor-pointer font-serif"

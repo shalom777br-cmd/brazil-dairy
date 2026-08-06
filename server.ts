@@ -61,7 +61,7 @@ app.get("/api/feed", async (req, res) => {
     return res.status(500).json({ error: "Supabase client not initialized" });
   }
 
-  const limit = parseInt((req.query.limit as string) || "50", 10);
+  const limit = parseInt((req.query.limit as string) || "1000", 10);
   const offset = parseInt((req.query.offset as string) || "0", 10);
   const sourceFilter = (req.query.source as string) || "blog_original";
 
@@ -169,12 +169,13 @@ app.get("/api/feed", async (req, res) => {
       }));
     } else {
       // 'all' filter: Combine items across tables
+      const combineLimit = Math.min(limit, 2000);
       const [qRes, aRes, dRes, fRes, tRes] = await Promise.all([
-        supabase.from("x_post_queue").select("*").order("created_at", { ascending: false }).limit(50),
-        supabase.from("ameblo_posts").select("*").order("posted_at", { ascending: false }).limit(50),
-        supabase.from("brazil_diary_posts").select("*").order("posted_at", { ascending: false }).limit(50),
-        supabase.from("fc2_epata_blog_posts").select("*").order("posted_at", { ascending: false }).limit(50),
-        supabase.from("memory_timeline_events").select("*").order("event_date", { ascending: false }).limit(50),
+        supabase.from("x_post_queue").select("*").order("created_at", { ascending: false }).limit(combineLimit),
+        supabase.from("ameblo_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
+        supabase.from("brazil_diary_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
+        supabase.from("fc2_epata_blog_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
+        supabase.from("memory_timeline_events").select("*").order("event_date", { ascending: false }).limit(combineLimit),
       ]);
 
       const allItems: any[] = [];
