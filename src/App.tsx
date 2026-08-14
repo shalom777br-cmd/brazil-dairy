@@ -34,7 +34,8 @@ import {
   Camera,
   Link2,
   Archive,
-  ChevronDown
+  ChevronDown,
+  CheckCircle2
 } from "lucide-react";
 import { SupabaseModal } from "./components/SupabaseModal";
 import { fetchUnifiedFeed, UnifiedFeedItem, updateFeedItemInSupabase, insertNewBlogOriginalInSupabase } from "./lib/supabase";
@@ -900,234 +901,8 @@ export default function App() {
       {/* Main Container */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-8 flex flex-col md:flex-row gap-8">
         
-        {/* Left Side: Main Blog Timeline */}
-        <section className="flex-1 order-2 md:order-1">
-          {/* Source Filter Switcher (blog_unified_feed) */}
-          <div className="mb-6 p-4 bg-cream-50 border border-gold-500/30 rounded-xl shadow-sm space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 text-navy-950 font-serif font-bold text-sm">
-                <Compass className="w-4 h-4 text-gold-600" />
-                統合フィードソース (<code className="text-xs text-gold-700 font-mono">blog_unified_feed</code>)
-              </div>
-              <div className="flex items-center gap-3 text-xs text-navy-700">
-                <div className="flex items-center gap-1 bg-cream-200/90 p-1 rounded-lg border border-cream-300">
-                  <span className="text-[11px] font-serif font-semibold text-navy-800 px-1 flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-gold-600" /> 並び順:
-                  </span>
-                  <button
-                    onClick={() => setSortOrder('desc')}
-                    className={`px-2.5 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
-                      sortOrder === 'desc'
-                        ? 'bg-navy-900 text-gold-400 shadow-sm'
-                        : 'text-navy-700 hover:bg-cream-300/60'
-                    }`}
-                  >
-                    新しい順 (降順)
-                  </button>
-                  <button
-                    onClick={() => setSortOrder('asc')}
-                    className={`px-2.5 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
-                      sortOrder === 'asc'
-                        ? 'bg-navy-900 text-gold-400 shadow-sm'
-                        : 'text-navy-700 hover:bg-cream-300/60'
-                    }`}
-                  >
-                    古い順 (昇順)
-                  </button>
-                </div>
-                <span className="font-mono">表示: {filteredFeedItems.length} / {totalFeedCount} 件</span>
-                {isFeedLoading && <RefreshCw className="w-3.5 h-3.5 text-gold-500 animate-spin" />}
-              </div>
-            </div>
-
-            {/* Source Filter Tabs */}
-            <div className="flex flex-wrap gap-2">
-              {[
-                { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
-                { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
-                { id: 'timeline', label: '年表 (120)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
-                { id: 'fc2_epata', label: 'FC2 エパタ (913)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
-                { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
-                { id: 'ameblo', label: 'Ameblo (715)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
-              ].map((tab) => {
-                const isActive = selectedSourceFilter === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setSelectedSourceFilter(tab.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-serif font-bold transition flex items-center gap-1.5 cursor-pointer border ${
-                      isActive
-                        ? 'bg-navy-950 text-gold-400 border-navy-900 shadow-md ring-1 ring-gold-500/40'
-                        : `${tab.badge} hover:brightness-95`
-                    }`}
-                  >
-                    {tab.icon}
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Year and Month Grid Navigation (Reference UI pattern) */}
-          <div className="mb-6 bg-cream-50 border border-gold-500/30 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-cream-300 pb-3 flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-gold-600" />
-                <h3 className="font-serif font-bold text-navy-900 text-sm">
-                  月別・年別記事ナビゲーション
-                </h3>
-              </div>
-              <div className="flex items-center gap-3 text-xs font-serif flex-wrap">
-                <div className="flex items-center gap-1 bg-cream-100/90 p-0.5 rounded-md border border-cream-300">
-                  <button
-                    onClick={() => setSortOrder('desc')}
-                    className={`px-2 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
-                      sortOrder === 'desc'
-                        ? 'bg-navy-900 text-gold-400'
-                        : 'text-navy-700 hover:bg-cream-200'
-                    }`}
-                  >
-                    新しい順
-                  </button>
-                  <button
-                    onClick={() => setSortOrder('asc')}
-                    className={`px-2 py-0.5 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
-                      sortOrder === 'asc'
-                        ? 'bg-navy-900 text-gold-400'
-                        : 'text-navy-700 hover:bg-cream-200'
-                    }`}
-                  >
-                    古い順
-                  </button>
-                </div>
-                {(selectedYearFilter || selectedMonthFilter) && (
-                  <button
-                    onClick={() => {
-                      setSelectedYearFilter(null);
-                      setSelectedMonthFilter(null);
-                    }}
-                    className="text-gold-700 hover:text-gold-600 underline cursor-pointer"
-                  >
-                    全期間を表示
-                  </button>
-                )}
-                {selectedYearFilter && (
-                  <span className="bg-navy-900 text-gold-400 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono">
-                    {selectedYearFilter}年 {selectedMonthFilter ? `${parseInt(selectedMonthFilter.split('-')[1], 10)}月` : '全月'}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Year Selector Grid (Row of Year Buttons) */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-serif text-navy-700 font-semibold block">
-                年を選択:
-              </label>
-              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 bg-cream-100/70 rounded-lg border border-cream-200">
-                <button
-                  onClick={() => {
-                    setSelectedYearFilter(null);
-                    setSelectedMonthFilter(null);
-                  }}
-                  className={`px-3 py-1 rounded text-xs font-serif font-medium transition cursor-pointer border ${
-                    !selectedYearFilter && !selectedMonthFilter
-                      ? "bg-navy-900 text-gold-400 border-navy-900 shadow-sm font-bold"
-                      : "bg-cream-50 hover:bg-cream-200 text-navy-800 border-cream-300"
-                  }`}
-                >
-                  全期間
-                </button>
-                {yearList.map(({ year, total }) => {
-                  const isYearSelected = selectedYearFilter === year || selectedMonthFilter?.startsWith(year);
-                  return (
-                    <button
-                      key={year}
-                      onClick={() => {
-                        setSelectedYearFilter(year);
-                        // If selected month was in another year, clear month filter
-                        if (selectedMonthFilter && !selectedMonthFilter.startsWith(year)) {
-                          setSelectedMonthFilter(null);
-                        }
-                      }}
-                      className={`px-3 py-1 rounded text-xs font-serif transition flex items-center gap-1 cursor-pointer border ${
-                        isYearSelected
-                          ? "bg-navy-950 text-gold-400 border-navy-900 shadow-sm font-bold ring-1 ring-gold-500/40"
-                          : "bg-cream-50 hover:bg-cream-200 text-navy-800 border-cream-300"
-                      }`}
-                    >
-                      <span>{year}年</span>
-                      <span className={`text-[10px] font-mono ${isYearSelected ? 'text-gold-300' : 'text-navy-600/60'}`}>
-                        ({total})
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 12-Month Selector Grid for active year */}
-            {(() => {
-              const activeYear = selectedYearFilter || selectedMonthFilter?.split('-')[0] || (yearList.length > 0 ? yearList[0].year : null);
-              const activeArchiveObj = monthlyArchives.find((a) => a.year === activeYear);
-
-              if (!activeYear || !activeArchiveObj) return null;
-
-              return (
-                <div className="space-y-2 pt-2 border-t border-cream-200">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-serif text-navy-700 font-semibold">
-                      {activeYear}年の月を選択 (1月〜12月):
-                    </label>
-                    {selectedMonthFilter && selectedMonthFilter.startsWith(activeYear) && (
-                      <button
-                        onClick={() => setSelectedMonthFilter(null)}
-                        className="text-[10px] text-navy-600 hover:text-navy-900 underline font-serif cursor-pointer"
-                      >
-                        {activeYear}年の全記事を表示
-                      </button>
-                    )}
-                  </div>
-
-                  {/* 12 Month Grid Buttons (2 rows of 6 cols on md, 3x4 on mobile) */}
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                    {activeArchiveObj.months.map(({ monthKey, monthNum, count }) => {
-                      const isMonthSelected = selectedMonthFilter === monthKey;
-                      const hasArticles = count > 0;
-
-                      return (
-                        <button
-                          key={monthKey}
-                          disabled={!hasArticles}
-                          onClick={() => {
-                            if (!hasArticles) return;
-                            setSelectedYearFilter(activeYear);
-                            setSelectedMonthFilter(isMonthSelected ? null : monthKey);
-                          }}
-                          className={`py-2 px-2 rounded-lg text-xs font-serif flex flex-col items-center justify-center transition border ${
-                            isMonthSelected
-                              ? "bg-navy-900 text-gold-400 border-navy-900 shadow-md font-bold ring-2 ring-gold-500/60 cursor-pointer"
-                              : hasArticles
-                              ? "bg-cream-100 hover:bg-cream-200 text-navy-900 border-cream-300 hover:border-gold-400/60 cursor-pointer"
-                              : "bg-cream-100/40 text-navy-400/40 border-cream-200/50 cursor-not-allowed"
-                          }`}
-                        >
-                          <span className="font-bold">{monthNum}月</span>
-                          <span className={`text-[10px] font-mono mt-0.5 ${
-                            isMonthSelected ? "text-gold-300" : hasArticles ? "text-navy-600" : "text-navy-400/40"
-                          }`}>
-                            {hasArticles ? `${count}件` : "0件"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-
+        {/* Left Side: Main Blog Timeline (Articles Placed at Top) */}
+        <section className="flex-1 order-1">
           {/* Active Filters Summary */}
           {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all' || selectedYearFilter || selectedMonthFilter) && (
             <div className="mb-6 p-4 bg-cream-200 border border-cream-300 rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -1319,28 +1094,221 @@ export default function App() {
           )}
         </section>
 
-        {/* Right Side: Sidebar Search + Tags */}
-        <aside className="w-full md:w-80 space-y-6 order-1 md:order-2">
-          {/* Author Intro (Elegant Editorial Card) */}
-          <div className="bg-navy-900 text-cream-100 p-5 rounded-xl border border-gold-500/30 relative overflow-hidden">
-            <div className="absolute -right-6 -bottom-6 opacity-5 pointer-events-none">
-              <Sparkles className="w-32 h-32 text-gold-400" />
-            </div>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full border border-gold-400 flex items-center justify-center bg-navy-800 text-gold-400">
-                <MapPin className="w-5 h-5" />
+        {/* Right Side: Sidebar Navigation */}
+        <aside className="w-full md:w-80 lg:w-96 space-y-6 order-2">
+          
+          {/* 1. Source Filter Switcher (blog_unified_feed) */}
+          <div className="p-5 bg-cream-50 border border-gold-500/30 rounded-xl shadow-sm space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-cream-300 pb-3">
+              <div className="flex items-center gap-2 text-navy-950 font-serif font-bold text-sm">
+                <Compass className="w-4 h-4 text-gold-600" />
+                統合フィードソース
               </div>
-              <div>
-                <h4 className="font-serif font-bold text-sm text-gold-400">宣教地：ブラジル</h4>
-                <p className="text-[10px] text-cream-100/60 font-mono">São Paulo, Brasil</p>
+              {isFeedLoading && <RefreshCw className="w-3.5 h-3.5 text-gold-500 animate-spin" />}
+            </div>
+
+            {/* Sort Order Toggle */}
+            <div className="flex items-center justify-between gap-2 bg-cream-200/80 p-1.5 rounded-lg border border-cream-300 text-xs">
+              <span className="text-[11px] font-serif font-semibold text-navy-800 px-1 flex items-center gap-1">
+                <Clock className="w-3 h-3 text-gold-600" /> 並び順:
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setSortOrder('desc')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
+                    sortOrder === 'desc'
+                      ? 'bg-navy-900 text-gold-400 shadow-sm'
+                      : 'text-navy-700 hover:bg-cream-300/60'
+                  }`}
+                >
+                  新しい順
+                </button>
+                <button
+                  onClick={() => setSortOrder('asc')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-serif font-bold transition cursor-pointer ${
+                    sortOrder === 'asc'
+                      ? 'bg-navy-900 text-gold-400 shadow-sm'
+                      : 'text-navy-700 hover:bg-cream-300/60'
+                  }`}
+                >
+                  古い順
+                </button>
               </div>
             </div>
-            <p className="text-xs text-cream-100/80 leading-relaxed font-serif">
-              ポルトガル語の習得に励みながら、地域のコミュニティや教会開拓に携わっています。言葉を越えた神様の愛をお伝えするための日常を綴っています。
-            </p>
+
+            {/* Source Filter Tabs */}
+            <div className="flex flex-col gap-1.5">
+              {[
+                { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
+                { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
+                { id: 'timeline', label: '年表 (120)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
+                { id: 'fc2_epata', label: 'FC2 エパタ (913)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
+                { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
+                { id: 'ameblo', label: 'Ameblo (715)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
+              ].map((tab) => {
+                const isActive = selectedSourceFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setSelectedSourceFilter(tab.id)}
+                    className={`w-full px-3 py-2 rounded-lg text-xs font-serif font-bold transition flex items-center justify-between cursor-pointer border ${
+                      isActive
+                        ? 'bg-navy-950 text-gold-400 border-navy-900 shadow-md ring-1 ring-gold-500/40'
+                        : `${tab.badge} hover:brightness-95`
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {tab.icon}
+                      <span>{tab.label}</span>
+                    </div>
+                    {isActive && <CheckCircle2 className="w-3.5 h-3.5 text-gold-400" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-cream-200 text-[11px] text-navy-600/80 font-mono text-right">
+              表示件数: {filteredFeedItems.length} / {totalFeedCount} 件
+            </div>
           </div>
 
-          {/* Search Card */}
+          {/* 2. Year and Month Grid Navigation */}
+          <div className="bg-cream-50 border border-gold-500/30 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-cream-300 pb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-gold-600" />
+                <h3 className="font-serif font-bold text-navy-900 text-sm">
+                  月別・年別ナビゲーション
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-serif">
+                {(selectedYearFilter || selectedMonthFilter) && (
+                  <button
+                    onClick={() => {
+                      setSelectedYearFilter(null);
+                      setSelectedMonthFilter(null);
+                    }}
+                    className="text-[11px] text-gold-700 hover:text-gold-600 underline cursor-pointer"
+                  >
+                    全期間
+                  </button>
+                )}
+                {selectedYearFilter && (
+                  <span className="bg-navy-900 text-gold-400 px-2 py-0.5 rounded-full text-[11px] font-bold font-mono">
+                    {selectedYearFilter}年{selectedMonthFilter ? `${parseInt(selectedMonthFilter.split('-')[1], 10)}月` : ''}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Year Selector Grid */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-serif text-navy-700 font-semibold block">
+                年を選択:
+              </label>
+              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-cream-100/70 rounded-lg border border-cream-200">
+                <button
+                  onClick={() => {
+                    setSelectedYearFilter(null);
+                    setSelectedMonthFilter(null);
+                  }}
+                  className={`px-2.5 py-1 rounded text-xs font-serif font-medium transition cursor-pointer border ${
+                    !selectedYearFilter && !selectedMonthFilter
+                      ? "bg-navy-900 text-gold-400 border-navy-900 shadow-sm font-bold"
+                      : "bg-cream-50 hover:bg-cream-200 text-navy-800 border-cream-300"
+                  }`}
+                >
+                  全期間
+                </button>
+                {yearList.map(({ year, total }) => {
+                  const isYearSelected = selectedYearFilter === year || selectedMonthFilter?.startsWith(year);
+                  return (
+                    <button
+                      key={year}
+                      onClick={() => {
+                        setSelectedYearFilter(year);
+                        if (selectedMonthFilter && !selectedMonthFilter.startsWith(year)) {
+                          setSelectedMonthFilter(null);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded text-xs font-serif transition flex items-center gap-1 cursor-pointer border ${
+                        isYearSelected
+                          ? "bg-navy-950 text-gold-400 border-navy-900 shadow-sm font-bold ring-1 ring-gold-500/40"
+                          : "bg-cream-50 hover:bg-cream-200 text-navy-800 border-cream-300"
+                      }`}
+                    >
+                      <span>{year}年</span>
+                      <span className={`text-[10px] font-mono ${isYearSelected ? 'text-gold-300' : 'text-navy-600/60'}`}>
+                        ({total})
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 12-Month Selector Grid for active year */}
+            {(() => {
+              const activeYear = selectedYearFilter || selectedMonthFilter?.split('-')[0] || (yearList.length > 0 ? yearList[0].year : null);
+              const activeArchiveObj = monthlyArchives.find((a) => a.year === activeYear);
+
+              if (!activeYear || !activeArchiveObj) return null;
+
+              return (
+                <div className="space-y-2 pt-2 border-t border-cream-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-serif text-navy-700 font-semibold">
+                      {activeYear}年の月 (1月〜12月):
+                    </label>
+                    {selectedMonthFilter && selectedMonthFilter.startsWith(activeYear) && (
+                      <button
+                        onClick={() => setSelectedMonthFilter(null)}
+                        className="text-[10px] text-navy-600 hover:text-navy-900 underline font-serif cursor-pointer"
+                      >
+                        {activeYear}年全体
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 12 Month Grid Buttons */}
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                    {activeArchiveObj.months.map(({ monthKey, monthNum, count }) => {
+                      const isMonthSelected = selectedMonthFilter === monthKey;
+                      const hasArticles = count > 0;
+
+                      return (
+                        <button
+                          key={monthKey}
+                          disabled={!hasArticles}
+                          onClick={() => {
+                            if (!hasArticles) return;
+                            setSelectedYearFilter(activeYear);
+                            setSelectedMonthFilter(isMonthSelected ? null : monthKey);
+                          }}
+                          className={`py-1.5 px-1 rounded-md text-xs font-serif flex flex-col items-center justify-center transition border ${
+                            isMonthSelected
+                              ? "bg-navy-900 text-gold-400 border-navy-900 shadow-md font-bold ring-1 ring-gold-500/60 cursor-pointer"
+                              : hasArticles
+                              ? "bg-cream-100 hover:bg-cream-200 text-navy-900 border-cream-300 hover:border-gold-400/60 cursor-pointer"
+                              : "bg-cream-100/40 text-navy-400/30 border-cream-200/40 cursor-not-allowed"
+                          }`}
+                        >
+                          <span className="font-bold text-[11px]">{monthNum}月</span>
+                          <span className={`text-[9px] font-mono ${
+                            isMonthSelected ? "text-gold-300" : hasArticles ? "text-navy-600" : "text-navy-400/30"
+                          }`}>
+                            {hasArticles ? `${count}件` : "0件"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* 3. Search Card */}
           <div className="bg-cream-50 border border-cream-300 rounded-xl p-5 shadow-sm space-y-4">
             <h3 className="font-serif font-bold text-navy-800 border-b border-cream-300 pb-2 flex items-center gap-2">
               <Search className="w-4 h-4 text-gold-500" />
@@ -1360,79 +1328,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Monthly Archive Card */}
-          <div className="bg-cream-50 border border-cream-300 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-cream-300 pb-2">
-              <h3 className="font-serif font-bold text-navy-800 flex items-center gap-2">
-                <Archive className="w-4 h-4 text-gold-500" />
-                月別アーカイブ
-              </h3>
-              {selectedMonthFilter && (
-                <button
-                  onClick={() => setSelectedMonthFilter(null)}
-                  className="text-[10px] text-gold-700 hover:text-gold-600 underline font-serif cursor-pointer"
-                >
-                  選択解除
-                </button>
-              )}
-            </div>
-
-            {isFeedLoading && unifiedFeed.length === 0 ? (
-              <div className="h-16 flex items-center justify-center">
-                <span className="text-xs text-navy-600/40 font-serif">読み込み中...</span>
-              </div>
-            ) : monthlyArchives.length === 0 ? (
-              <p className="text-xs text-navy-600/40 font-serif">アーカイブがありません。</p>
-            ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {monthlyArchives.map(({ year, yearTotal, months }) => {
-                  const isYearOpen = expandedYears.length === 0 || expandedYears.includes(year) || selectedMonthFilter?.startsWith(year);
-                  return (
-                    <div key={year} className="border border-cream-200/90 rounded-lg overflow-hidden bg-cream-100/60">
-                      <button
-                        onClick={() => toggleYearExpand(year)}
-                        className="w-full px-3 py-2 flex items-center justify-between text-xs font-serif font-bold text-navy-900 hover:bg-cream-200/80 transition cursor-pointer"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <ChevronDown className={`w-3.5 h-3.5 text-gold-600 transition-transform duration-200 ${isYearOpen ? '' : '-rotate-90'}`} />
-                          <span>{year}年</span>
-                        </div>
-                        <span className="text-[10px] font-mono font-normal text-navy-600/70 bg-cream-200 px-2 py-0.5 rounded-full">
-                          {yearTotal}件
-                        </span>
-                      </button>
-
-                      {isYearOpen && (
-                        <div className="px-3 pb-2 pt-1 grid grid-cols-2 gap-1.5 border-t border-cream-200/60 bg-cream-50">
-                          {months.map(({ monthKey, monthNum, count }) => {
-                            const isSelected = selectedMonthFilter === monthKey;
-                            return (
-                              <button
-                                key={monthKey}
-                                onClick={() => setSelectedMonthFilter(isSelected ? null : monthKey)}
-                                className={`px-2 py-1 rounded text-xs font-serif flex items-center justify-between transition cursor-pointer border ${
-                                  isSelected
-                                    ? "bg-navy-900 text-gold-400 border-navy-900 font-bold shadow-sm ring-1 ring-gold-500/40"
-                                    : "bg-cream-100 hover:bg-cream-200 text-navy-800 border-cream-300/60"
-                                }`}
-                              >
-                                <span>{monthNum}月</span>
-                                <span className={`text-[10px] font-mono ${isSelected ? 'text-gold-300' : 'text-navy-600/60'}`}>
-                                  ({count})
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Tags Cloud Card */}
+          {/* 4. Tags Cloud Card */}
           <div className="bg-cream-50 border border-cream-300 rounded-xl p-5 shadow-sm space-y-4">
             <h3 className="font-serif font-bold text-navy-800 border-b border-cream-300 pb-2 flex items-center gap-2">
               <Tag className="w-4 h-4 text-gold-500" />
@@ -1465,6 +1361,25 @@ export default function App() {
                 })}
               </div>
             )}
+          </div>
+
+          {/* 5. Author Intro (Editorial Card) */}
+          <div className="bg-navy-900 text-cream-100 p-5 rounded-xl border border-gold-500/30 relative overflow-hidden">
+            <div className="absolute -right-6 -bottom-6 opacity-5 pointer-events-none">
+              <Sparkles className="w-32 h-32 text-gold-400" />
+            </div>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full border border-gold-400 flex items-center justify-center bg-navy-800 text-gold-400">
+                <MapPin className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-serif font-bold text-sm text-gold-400">宣教地：ブラジル</h4>
+                <p className="text-[10px] text-cream-100/60 font-mono">São Paulo, Brasil</p>
+              </div>
+            </div>
+            <p className="text-xs text-cream-100/80 leading-relaxed font-serif">
+              ポルトガル語の習得に励みながら、地域のコミュニティや教会開拓に携わっています。言葉を越えた神様の愛をお伝えするための日常を綴っています。
+            </p>
           </div>
         </aside>
       </main>
