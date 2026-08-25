@@ -103,9 +103,9 @@ export async function fetchUnifiedFeed(
     if (!sourceFilter || sourceFilter === 'all') {
       const existingSources = new Set(items.map(i => i.source));
       
-      // Fetch x_post_queue if not in view
+      // Fetch blog_queue if not in view
       if (!existingSources.has('blog_original')) {
-        const { data: qData } = await client.from('x_post_queue').select('*');
+        const { data: qData } = await client.from('blog_queue').select('*');
         if (qData) {
           qData.forEach(q => {
             items.push({
@@ -180,7 +180,7 @@ export async function fetchUnifiedFeed(
   // Fallback direct table queries if database view has not yet included specific source
   if (sourceFilter === 'blog_original') {
     const { data: queueData, count: queueCount, error: qErr } = await client
-      .from('x_post_queue')
+      .from('blog_queue')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -268,7 +268,7 @@ export async function updateFeedItemInSupabase(item: UnifiedFeedItem): Promise<b
     if (item.source === 'blog_original') {
       const content = item.title ? `# ${item.title}\n\n${item.body}` : item.body;
       const { error } = await client
-        .from('x_post_queue')
+        .from('blog_queue')
         .update({ content, posted_at: item.posted_date })
         .eq('id', item.item_id);
       return !error;
@@ -344,7 +344,7 @@ export async function insertNewBlogOriginalInSupabase(item: UnifiedFeedItem): Pr
   try {
     const content = item.title ? `# ${item.title}\n\n${item.body}` : item.body;
     const { data, error } = await client
-      .from('x_post_queue')
+      .from('blog_queue')
       .insert({
         content,
         posted_at: item.posted_date,

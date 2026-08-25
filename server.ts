@@ -71,7 +71,7 @@ app.get("/api/feed", async (req, res) => {
 
     if (sourceFilter === "blog_original") {
       const { data, count, error } = await supabase
-        .from("x_post_queue")
+        .from("blog_queue")
         .select("*", { count: "exact" })
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
@@ -171,7 +171,7 @@ app.get("/api/feed", async (req, res) => {
       // 'all' filter: Combine items across tables
       const combineLimit = Math.min(limit, 2000);
       const [qRes, aRes, dRes, fRes, tRes] = await Promise.all([
-        supabase.from("x_post_queue").select("*").order("created_at", { ascending: false }).limit(combineLimit),
+        supabase.from("blog_queue").select("*").order("created_at", { ascending: false }).limit(combineLimit),
         supabase.from("ameblo_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
         supabase.from("brazil_diary_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
         supabase.from("fc2_epata_blog_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
@@ -268,7 +268,7 @@ app.post("/api/feed/insert", async (req, res) => {
   const content = title ? `# ${title}\n\n${body}` : body;
   try {
     const { data, error } = await supabase
-      .from("x_post_queue")
+      .from("blog_queue")
       .insert({
         content,
         posted_at: posted_date || new Date().toISOString(),
@@ -291,7 +291,7 @@ app.post("/api/feed/update", async (req, res) => {
     let error = null;
     if (source === "blog_original") {
       const content = title ? `# ${title}\n\n${body}` : body;
-      const res = await supabase.from("x_post_queue").update({ content, posted_at: posted_date }).eq("id", item_id);
+      const res = await supabase.from("blog_queue").update({ content, posted_at: posted_date }).eq("id", item_id);
       error = res.error;
     } else if (source === "ameblo") {
       const res = await supabase.from("ameblo_posts").update({ title, body_clean: body, posted_at: posted_date, category }).eq("id", item_id);
@@ -321,7 +321,7 @@ app.post("/api/feed/delete", async (req, res) => {
   try {
     let error = null;
     if (source === "blog_original") {
-      const res = await supabase.from("x_post_queue").delete().eq("id", item_id);
+      const res = await supabase.from("blog_queue").delete().eq("id", item_id);
       error = res.error;
     } else if (source === "ameblo") {
       const res = await supabase.from("ameblo_posts").delete().eq("id", item_id);
