@@ -168,14 +168,14 @@ export default function App() {
   };
 
 
-  const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'blog_original', append = false) => {
+  const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'all', append = false) => {
     setIsFeedLoading(true);
     try {
       let fetchedItems: UnifiedFeedItem[] = [];
       let dbTotalCount = 0;
 
       try {
-        const res = await fetchUnifiedFeed(1500, offset, sourceFilter);
+        const res = await fetchUnifiedFeed(10000, offset, sourceFilter);
         if (res && res.items) {
           fetchedItems = res.items;
           dbTotalCount = res.totalCount;
@@ -648,11 +648,12 @@ export default function App() {
   // Filter unified feed items
   const filteredFeedItems = unifiedFeed.filter((item) => {
     const queryLower = searchQuery.toLowerCase().trim();
-    const displayTitle = item.title || (item.body ? item.body.replace(/[#*`\n]/g, " ").slice(0, 40) : "");
+    const itemBody = item.body || "";
+    const displayTitle = item.title || (itemBody ? itemBody.replace(/[#*`\n]/g, " ").slice(0, 40) : "");
     const matchesSearch =
       !queryLower ||
       displayTitle.toLowerCase().includes(queryLower) ||
-      item.body.toLowerCase().includes(queryLower) ||
+      itemBody.toLowerCase().includes(queryLower) ||
       (item.category && item.category.toLowerCase().includes(queryLower)) ||
       (item.tags && item.tags.some((t) => t.toLowerCase().includes(queryLower)));
 
@@ -1043,7 +1044,8 @@ export default function App() {
                                 </h3>
 
                                 <p className="text-navy-700/80 text-sm line-clamp-3 leading-relaxed">
-                                  {item.body.replace(/[#*`\n]/g, " ").slice(0, 160)}...
+                                  {(item.body || "").replace(/[#*`\n]/g, " ").slice(0, 160)}
+                                  {item.body && item.body.length > 160 ? "..." : ""}
                                 </p>
                               </div>
 
@@ -1141,8 +1143,8 @@ export default function App() {
               {[
                 { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
                 { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
-                { id: 'timeline', label: '年表 (120)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
-                { id: 'fc2_epata', label: 'FC2 エパタ (913)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
+                { id: 'timeline', label: '年表 (124)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
+                { id: 'fc2_epata', label: 'FC2 エパタ (1,581)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
                 { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
                 { id: 'ameblo', label: 'Ameblo (715)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
               ].map((tab) => {
@@ -1476,7 +1478,7 @@ export default function App() {
 
                 {/* Markdown Rendered Content */}
                 <div className="markdown-body">
-                  <Markdown>{selectedFeedItem.body}</Markdown>
+                  <Markdown>{selectedFeedItem.body || "*本文はありません*"}</Markdown>
                 </div>
               </div>
 

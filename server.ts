@@ -55,30 +55,80 @@ function parseOriginalContent(content: string, itemTitle?: string | null) {
   return { title: itemTitle || null, body: content };
 }
 
+// Helper to fetch all rows across 1000-item PostgREST chunk boundaries
+async function fetchTableInChunks(
+  tableName: string,
+  orderCol: string,
+  ascending = false,
+  offset = 0,
+  limit = 10000
+) {
+  const CHUNK_SIZE = 1000;
+  // If requesting within 1000 items
+  if (limit <= CHUNK_SIZE) {
+    const { data, count, error } = await supabase!
+      .from(tableName)
+      .select("*", { count: "exact" })
+      .order(orderCol, { ascending })
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
+    return { data: data || [], count: count || (data ? data.length : 0) };
+  }
+
+  // Fetch count and first chunk
+  const { data: firstChunk, count, error } = await supabase!
+    .from(tableName)
+    .select("*", { count: "exact" })
+    .order(orderCol, { ascending })
+    .range(offset, offset + CHUNK_SIZE - 1);
+
+  if (error) throw error;
+  if (!firstChunk) return { data: [], count: 0 };
+
+  const totalCount = count || firstChunk.length;
+  const allData = [...firstChunk];
+
+  const targetCount = Math.min(totalCount, offset + limit);
+  if (targetCount > offset + CHUNK_SIZE) {
+    const chunkPromises = [];
+    for (let from = offset + CHUNK_SIZE; from < targetCount; from += CHUNK_SIZE) {
+      const to = Math.min(from + CHUNK_SIZE - 1, targetCount - 1);
+      chunkPromises.push(
+        supabase!
+          .from(tableName)
+          .select("*")
+          .order(orderCol, { ascending })
+          .range(from, to)
+      );
+    }
+    const results = await Promise.all(chunkPromises);
+    for (const r of results) {
+      if (r.error) throw r.error;
+      if (r.data) allData.push(...r.data);
+    }
+  }
+
+  return { data: allData, count: totalCount };
+}
+
 // API Routes
 app.get("/api/feed", async (req, res) => {
   if (!supabase) {
     return res.status(500).json({ error: "Supabase client not initialized" });
   }
 
-  const limit = parseInt((req.query.limit as string) || "1000", 10);
+  const limit = parseInt((req.query.limit as string) || "10000", 10);
   const offset = parseInt((req.query.offset as string) || "0", 10);
-  const sourceFilter = (req.query.source as string) || "blog_original";
+  const sourceFilter = (req.query.source as string) || "all";
 
   try {
     let items: any[] = [];
     let totalCount = 0;
 
     if (sourceFilter === "blog_original") {
-      const { data, count, error } = await supabase
-        .from("blog_queue")
-        .select("*", { count: "exact" })
-        .order("created_at", { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (error) throw error;
-      totalCount = count || 0;
-      items = (data || []).map((q) => {
+      const { data, count } = await fetchTableInChunks("blog_queue", "created_at", false, offset, limit);
+      totalCount = count;
+      items = (data || []).map((q: any) => {
         const parsed = parseOriginalContent(q.content || "");
         return {
           item_id: String(q.id),
@@ -92,15 +142,9 @@ app.get("/api/feed", async (req, res) => {
         };
       });
     } else if (sourceFilter === "ameblo") {
-      const { data, count, error } = await supabase
-        .from("ameblo_posts")
-        .select("*", { count: "exact" })
-        .order("posted_at", { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (error) throw error;
-      totalCount = count || 0;
-      items = (data || []).map((a) => ({
+      const { data, count } = await fetchTableInChunks("ameblo_posts", "posted_at", false, offset, limit);
+      totalCount = count;
+      items = (data || []).map((a: any) => ({
         item_id: String(a.id),
         source: "ameblo",
         posted_date: a.posted_at,
@@ -111,15 +155,9 @@ app.get("/api/feed", async (req, res) => {
         category: a.category || "ヘブライ語学習",
       }));
     } else if (sourceFilter === "brazil_diary") {
-      const { data, count, error } = await supabase
-        .from("brazil_diary_posts")
-        .select("*", { count: "exact" })
-        .order("posted_at", { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (error) throw error;
-      totalCount = count || 0;
-      items = (data || []).map((d) => ({
+      const { data, count } = await fetchTableInChunks("brazil_diary_posts", "posted_at", false, offset, limit);
+      totalCount = count;
+      items = (data || []).map((d: any) => ({
         item_id: String(d.id),
         source: "brazil_diary",
         posted_date: d.posted_at,
@@ -130,15 +168,9 @@ app.get("/api/feed", async (req, res) => {
         category: d.category || "ブラジル日記",
       }));
     } else if (sourceFilter === "fc2_epata") {
-      const { data, count, error } = await supabase
-        .from("fc2_epata_blog_posts")
-        .select("*", { count: "exact" })
-        .order("posted_at", { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (error) throw error;
-      totalCount = count || 0;
-      items = (data || []).map((f) => ({
+      const { data, count } = await fetchTableInChunks("fc2_epata_blog_posts", "posted_at", false, offset, limit);
+      totalCount = count;
+      items = (data || []).map((f: any) => ({
         item_id: String(f.id),
         source: "fc2_epata",
         posted_date: f.posted_at,
@@ -149,15 +181,9 @@ app.get("/api/feed", async (req, res) => {
         category: f.category || "FC2エパタ",
       }));
     } else if (sourceFilter === "timeline") {
-      const { data, count, error } = await supabase
-        .from("memory_timeline_events")
-        .select("*", { count: "exact" })
-        .order("event_date", { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (error) throw error;
-      totalCount = count || 0;
-      items = (data || []).map((t) => ({
+      const { data, count } = await fetchTableInChunks("memory_timeline_events", "event_date", false, offset, limit);
+      totalCount = count;
+      items = (data || []).map((t: any) => ({
         item_id: String(t.id),
         source: "timeline",
         posted_date: t.event_date || (t.year ? `${t.year}-01-01` : "1986-01-01"),
@@ -168,90 +194,113 @@ app.get("/api/feed", async (req, res) => {
         category: t.primary_category || "年表出来事",
       }));
     } else {
-      // 'all' filter: Combine items across tables
-      const combineLimit = Math.min(limit, 2000);
-      const [qRes, aRes, dRes, fRes, tRes] = await Promise.all([
-        supabase.from("blog_queue").select("*").order("created_at", { ascending: false }).limit(combineLimit),
-        supabase.from("ameblo_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
-        supabase.from("brazil_diary_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
-        supabase.from("fc2_epata_blog_posts").select("*").order("posted_at", { ascending: false }).limit(combineLimit),
-        supabase.from("memory_timeline_events").select("*").order("event_date", { ascending: false }).limit(combineLimit),
-      ]);
+      // 'all' filter: Try unified feed view first across chunk boundaries
+      try {
+        const { data: viewData, count: viewCount } = await fetchTableInChunks(
+          "blog_unified_feed",
+          "posted_date",
+          false,
+          offset,
+          limit
+        );
 
-      const allItems: any[] = [];
+        if (viewData && viewData.length > 0) {
+          totalCount = viewCount;
+          items = (viewData as any[]).map((item) => ({
+            ...item,
+            body: item.body || "",
+            title: item.title || null,
+          }));
+        }
+      } catch (viewErr) {
+        console.warn("blog_unified_feed query failed, falling back to multi-table combine:", viewErr);
+      }
 
-      (qRes.data || []).forEach((q) => {
-        const parsed = parseOriginalContent(q.content || "");
-        allItems.push({
-          item_id: String(q.id),
-          source: "blog_original",
-          posted_date: (q.posted_at || q.created_at || "").split("T")[0] || new Date().toISOString().split("T")[0],
-          title: parsed.title,
-          body: parsed.body,
-          tags: ["つぶやき"],
-          category: "ブログ原本",
+      // If view returned empty or failed, combine across all tables
+      if (items.length === 0) {
+        const [qRes, aRes, dRes, fRes, tRes] = await Promise.all([
+          fetchTableInChunks("blog_queue", "created_at", false, 0, limit),
+          fetchTableInChunks("ameblo_posts", "posted_at", false, 0, limit),
+          fetchTableInChunks("brazil_diary_posts", "posted_at", false, 0, limit),
+          fetchTableInChunks("fc2_epata_blog_posts", "posted_at", false, 0, limit),
+          fetchTableInChunks("memory_timeline_events", "event_date", false, 0, limit),
+        ]);
+
+        const allItems: any[] = [];
+
+        (qRes.data || []).forEach((q: any) => {
+          const parsed = parseOriginalContent(q.content || "");
+          allItems.push({
+            item_id: String(q.id),
+            source: "blog_original",
+            posted_date: (q.posted_at || q.created_at || "").split("T")[0] || new Date().toISOString().split("T")[0],
+            title: parsed.title,
+            body: parsed.body,
+            tags: ["つぶやき"],
+            category: "ブログ原本",
+          });
         });
-      });
 
-      (aRes.data || []).forEach((a) => {
-        allItems.push({
-          item_id: String(a.id),
-          source: "ameblo",
-          posted_date: a.posted_at,
-          title: a.title || "無題",
-          body: a.body_clean || a.body_text || "",
-          url: a.url,
-          tags: [a.category || "ヘブライ語学習"],
-          category: a.category || "ヘブライ語学習",
+        (aRes.data || []).forEach((a: any) => {
+          allItems.push({
+            item_id: String(a.id),
+            source: "ameblo",
+            posted_date: a.posted_at,
+            title: a.title || "無題",
+            body: a.body_clean || a.body_text || "",
+            url: a.url,
+            tags: [a.category || "ヘブライ語学習"],
+            category: a.category || "ヘブライ語学習",
+          });
         });
-      });
 
-      (dRes.data || []).forEach((d) => {
-        allItems.push({
-          item_id: String(d.id),
-          source: "brazil_diary",
-          posted_date: d.posted_at,
-          title: d.title || "無題",
-          body: d.body_clean || d.body_text || "",
-          url: d.url,
-          tags: [d.category || "ブラジル日記"],
-          category: d.category || "ブラジル日記",
+        (dRes.data || []).forEach((d: any) => {
+          allItems.push({
+            item_id: String(d.id),
+            source: "brazil_diary",
+            posted_date: d.posted_at,
+            title: d.title || "無題",
+            body: d.body_clean || d.body_text || "",
+            url: d.url,
+            tags: [d.category || "ブラジル日記"],
+            category: d.category || "ブラジル日記",
+          });
         });
-      });
 
-      (fRes.data || []).forEach((f) => {
-        allItems.push({
-          item_id: String(f.id),
-          source: "fc2_epata",
-          posted_date: f.posted_at,
-          title: f.title || "無題",
-          body: f.body_clean || f.body_text || "",
-          url: f.url,
-          tags: [f.category || "FC2エパタ"],
-          category: f.category || "FC2エパタ",
+        (fRes.data || []).forEach((f: any) => {
+          allItems.push({
+            item_id: String(f.id),
+            source: "fc2_epata",
+            posted_date: f.posted_at,
+            title: f.title || "無題",
+            body: f.body_clean || f.body_text || "",
+            url: f.url,
+            tags: [f.category || "FC2エパタ"],
+            category: f.category || "FC2エパタ",
+          });
         });
-      });
 
-      (tRes.data || []).forEach((t) => {
-        allItems.push({
-          item_id: String(t.id),
-          source: "timeline",
-          posted_date: t.event_date || (t.year ? `${t.year}-01-01` : "1986-01-01"),
-          title: t.title || "年表出来事",
-          body: t.body || t.summary || "",
-          tags: t.categories ? (Array.isArray(t.categories) ? t.categories : [t.categories]) : ["年表"],
-          category: t.primary_category || "年表出来事",
+        (tRes.data || []).forEach((t: any) => {
+          allItems.push({
+            item_id: String(t.id),
+            source: "timeline",
+            posted_date: t.event_date || (t.year ? `${t.year}-01-01` : "1986-01-01"),
+            title: t.title || "年表出来事",
+            body: t.body || t.summary || "",
+            tags: t.categories ? (Array.isArray(t.categories) ? t.categories : [t.categories]) : ["年表"],
+            category: t.primary_category || "年表出来事",
+          });
         });
-      });
 
-      allItems.sort((a, b) => {
-        if (a.source === "blog_original" && b.source !== "blog_original") return -1;
-        if (b.source === "blog_original" && a.source !== "blog_original") return 1;
-        return (b.posted_date || "").localeCompare(a.posted_date || "");
-      });
+        allItems.sort((a, b) => {
+          if (a.source === "blog_original" && b.source !== "blog_original") return -1;
+          if (b.source === "blog_original" && a.source !== "blog_original") return 1;
+          return (b.posted_date || "").localeCompare(a.posted_date || "");
+        });
 
-      totalCount = (qRes.count || 0) + (aRes.count || 0) + (dRes.count || 0) + (fRes.count || 0) + (tRes.count || 0) || allItems.length;
-      items = allItems.slice(offset, offset + limit);
+        totalCount = (qRes.count || 0) + (aRes.count || 0) + (dRes.count || 0) + (fRes.count || 0) + (tRes.count || 0) || allItems.length;
+        items = allItems.slice(offset, offset + limit);
+      }
     }
 
     res.json({ items, totalCount });

@@ -56,8 +56,58 @@ export interface UnifiedFeedItem {
   category?: string;
 }
 
+// Helper to fetch all rows across 1000-item PostgREST chunk boundaries on client
+async function fetchClientTableInChunks(
+  client: SupabaseClient,
+  tableName: string,
+  orderCol: string,
+  ascending = false,
+  offset = 0,
+  limit = 10000,
+  filterSource?: string
+) {
+  const CHUNK_SIZE = 1000;
+  let baseQuery = client.from(tableName).select('*', { count: 'exact' });
+  if (filterSource && filterSource !== 'all') {
+    baseQuery = baseQuery.eq('source', filterSource);
+  }
+
+  // Fetch count and first chunk
+  const { data: firstChunk, count, error } = await baseQuery
+    .order(orderCol, { ascending })
+    .range(offset, offset + CHUNK_SIZE - 1);
+
+  if (error) throw error;
+  if (!firstChunk) return { data: [], count: 0 };
+
+  const totalCount = count || firstChunk.length;
+  const allData = [...firstChunk];
+
+  const targetCount = Math.min(totalCount, offset + limit);
+  if (targetCount > offset + CHUNK_SIZE) {
+    const chunkPromises = [];
+    for (let from = offset + CHUNK_SIZE; from < targetCount; from += CHUNK_SIZE) {
+      const to = Math.min(from + CHUNK_SIZE - 1, targetCount - 1);
+      let query = client.from(tableName).select('*');
+      if (filterSource && filterSource !== 'all') {
+        query = query.eq('source', filterSource);
+      }
+      chunkPromises.push(
+        query.order(orderCol, { ascending }).range(from, to)
+      );
+    }
+    const results = await Promise.all(chunkPromises);
+    for (const r of results) {
+      if (r.error) throw r.error;
+      if (r.data) allData.push(...r.data);
+    }
+  }
+
+  return { data: allData, count: totalCount };
+}
+
 export async function fetchUnifiedFeed(
-  limit = 50,
+  limit = 10000,
   offset = 0,
   sourceFilter?: string,
   customKey?: string
@@ -65,7 +115,7 @@ export async function fetchUnifiedFeed(
   // Try server API first (which uses service role key to bypass RLS in production)
   try {
     const apiRes = await fetch(
-      `/api/feed?limit=${limit}&offset=${offset}&source=${sourceFilter || 'blog_original'}`
+      `/api/feed?limit=${limit}&offset=${offset}&source=${sourceFilter || 'all'}`
     );
     if (apiRes.ok) {
       const data = await apiRes.json();
@@ -85,165 +135,187 @@ export async function fetchUnifiedFeed(
     throw new Error("Supabase クライアントが初期化されていません。");
   }
 
-  let query = client
-    .from('blog_unified_feed')
-    .select('*', { count: 'exact' })
-    .order('posted_date', { ascending: false });
+  try {
+    // 1. First try view 'blog_unified_feed'
+    const { data: viewData, count: viewCount } = await fetchClientTableInChunks(
+      client,
+      'blog_unified_feed',
+      'posted_date',
+      false,
+      offset,
+      limit,
+      sourceFilter && sourceFilter !== 'all' ? sourceFilter : undefined
+    );
 
-  if (sourceFilter && sourceFilter !== 'all') {
-    query = query.eq('source', sourceFilter);
-  }
-
-  const { data, error, count } = await query.range(offset, offset + limit - 1);
-
-  if (!error && data && data.length > 0) {
-    let items = [...(data as UnifiedFeedItem[])];
-
-    // If 'all' filter and view only has partial sources (e.g. missing ameblo or blog_original)
-    if (!sourceFilter || sourceFilter === 'all') {
-      const existingSources = new Set(items.map(i => i.source));
-      
-      // Fetch blog_queue if not in view
-      if (!existingSources.has('blog_original')) {
-        const { data: qData } = await client.from('blog_queue').select('*');
-        if (qData) {
-          qData.forEach(q => {
-            items.push({
-              item_id: String(q.id),
-              source: 'blog_original',
-              posted_date: (q.posted_at || q.created_at || '').split('T')[0],
-              title: null,
-              body: q.content || '',
-              url: undefined,
-              tags: ['つぶやき'],
-              category: 'ブログ原本'
-            });
-          });
-        }
-      }
-
-      // Fetch ameblo_posts if not in view
-      if (!existingSources.has('ameblo')) {
-        const { data: aData } = await client.from('ameblo_posts').select('*').limit(200);
-        if (aData) {
-          aData.forEach(a => {
-            items.push({
-              item_id: String(a.id),
-              source: 'ameblo',
-              posted_date: a.posted_at,
-              title: a.title,
-              body: a.body_clean || a.body_text || '',
-              url: a.url,
-              tags: [a.category || 'ヘブライ語学習'],
-              category: a.category || 'ヘブライ語学習'
-            });
-          });
-        }
-      }
-
-      // Fetch brazil_diary_posts if not in view
-      if (!existingSources.has('brazil_diary')) {
-        const { data: dData } = await client.from('brazil_diary_posts').select('*').limit(200);
-        if (dData) {
-          dData.forEach(d => {
-            items.push({
-              item_id: String(d.id),
-              source: 'brazil_diary',
-              posted_date: d.posted_at,
-              title: d.title,
-              body: d.body_clean || d.body_text || '',
-              url: d.url,
-              tags: [d.category || 'ブラジル日記'],
-              category: d.category || 'ブラジル日記'
-            });
-          });
-        }
-      }
-
-      items.sort((a, b) => {
-        if (a.source === 'blog_original' && b.source !== 'blog_original') return -1;
-        if (b.source === 'blog_original' && a.source !== 'blog_original') return 1;
-        return (b.posted_date || '').localeCompare(a.posted_date || '');
-      });
+    if (viewData && viewData.length > 0) {
+      const items: UnifiedFeedItem[] = (viewData as any[]).map(v => ({
+        ...v,
+        body: v.body || '',
+        title: v.title || null,
+      }));
       return {
-        items: items.slice(0, limit),
-        totalCount: (count || 0) + items.length - data.length
+        items,
+        totalCount: viewCount || items.length
       };
     }
-
-    return {
-      items: items as UnifiedFeedItem[],
-      totalCount: count || 0
-    };
+  } catch (viewErr) {
+    console.warn("Direct query on blog_unified_feed failed, falling back to table queries:", viewErr);
   }
 
-  // Fallback direct table queries if database view has not yet included specific source
+  // Fallback direct table queries if database view is unavailable
   if (sourceFilter === 'blog_original') {
-    const { data: queueData, count: queueCount, error: qErr } = await client
-      .from('blog_queue')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const { data, count } = await fetchClientTableInChunks(client, 'blog_queue', 'created_at', false, offset, limit);
+    const items: UnifiedFeedItem[] = (data || []).map(q => ({
+      item_id: String(q.id),
+      source: 'blog_original',
+      posted_date: (q.posted_at || q.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+      title: null,
+      body: q.content || '',
+      url: undefined,
+      tags: ['つぶやき'],
+      category: 'ブログ原本'
+    }));
+    return { items, totalCount: count };
+  } else if (sourceFilter === 'ameblo') {
+    const { data, count } = await fetchClientTableInChunks(client, 'ameblo_posts', 'posted_at', false, offset, limit);
+    const items: UnifiedFeedItem[] = (data || []).map(a => ({
+      item_id: String(a.id),
+      source: 'ameblo',
+      posted_date: a.posted_at,
+      title: a.title || '無題',
+      body: a.body_clean || a.body_text || '',
+      url: a.url,
+      tags: [a.category || 'ヘブライ語学習'],
+      category: a.category || 'ヘブライ語学習'
+    }));
+    return { items, totalCount: count };
+  } else if (sourceFilter === 'brazil_diary') {
+    const { data, count } = await fetchClientTableInChunks(client, 'brazil_diary_posts', 'posted_at', false, offset, limit);
+    const items: UnifiedFeedItem[] = (data || []).map(d => ({
+      item_id: String(d.id),
+      source: 'brazil_diary',
+      posted_date: d.posted_at,
+      title: d.title || '無題',
+      body: d.body_clean || d.body_text || '',
+      url: d.url,
+      tags: [d.category || 'ブラジル日記'],
+      category: d.category || 'ブラジル日記'
+    }));
+    return { items, totalCount: count };
+  } else if (sourceFilter === 'fc2_epata') {
+    const { data, count } = await fetchClientTableInChunks(client, 'fc2_epata_blog_posts', 'posted_at', false, offset, limit);
+    const items: UnifiedFeedItem[] = (data || []).map(f => ({
+      item_id: String(f.id),
+      source: 'fc2_epata',
+      posted_date: f.posted_at,
+      title: f.title || '無題',
+      body: f.body_clean || f.body_text || '',
+      url: f.url,
+      tags: [f.category || 'FC2エパタ'],
+      category: f.category || 'FC2エパタ'
+    }));
+    return { items, totalCount: count };
+  } else if (sourceFilter === 'timeline') {
+    const { data, count } = await fetchClientTableInChunks(client, 'memory_timeline_events', 'event_date', false, offset, limit);
+    const items: UnifiedFeedItem[] = (data || []).map(t => ({
+      item_id: String(t.id),
+      source: 'timeline',
+      posted_date: t.event_date || (t.year ? `${t.year}-01-01` : '1986-01-01'),
+      title: t.title || '年表出来事',
+      body: t.body || t.summary || '',
+      url: undefined,
+      tags: t.categories ? (Array.isArray(t.categories) ? t.categories : [t.categories]) : ['年表'],
+      category: t.primary_category || '年表出来事'
+    }));
+    return { items, totalCount: count };
+  } else {
+    // All sources combined fallback
+    const [qRes, aRes, dRes, fRes, tRes] = await Promise.all([
+      fetchClientTableInChunks(client, 'blog_queue', 'created_at', false, 0, limit),
+      fetchClientTableInChunks(client, 'ameblo_posts', 'posted_at', false, 0, limit),
+      fetchClientTableInChunks(client, 'brazil_diary_posts', 'posted_at', false, 0, limit),
+      fetchClientTableInChunks(client, 'fc2_epata_blog_posts', 'posted_at', false, 0, limit),
+      fetchClientTableInChunks(client, 'memory_timeline_events', 'event_date', false, 0, limit),
+    ]);
 
-    if (!qErr && queueData) {
-      const items: UnifiedFeedItem[] = queueData.map(q => ({
+    const allItems: UnifiedFeedItem[] = [];
+
+    (qRes.data || []).forEach(q => {
+      allItems.push({
         item_id: String(q.id),
         source: 'blog_original',
-        posted_date: (q.posted_at || q.created_at || '').split('T')[0],
+        posted_date: (q.posted_at || q.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
         title: null,
         body: q.content || '',
         url: undefined,
         tags: ['つぶやき'],
         category: 'ブログ原本'
-      }));
-      return { items, totalCount: queueCount || items.length };
-    }
-  } else if (sourceFilter === 'ameblo') {
-    const { data: amebloData, count: amebloCount, error: aErr } = await client
-      .from('ameblo_posts')
-      .select('*', { count: 'exact' })
-      .order('posted_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      });
+    });
 
-    if (!aErr && amebloData) {
-      const items: UnifiedFeedItem[] = amebloData.map(a => ({
+    (aRes.data || []).forEach(a => {
+      allItems.push({
         item_id: String(a.id),
         source: 'ameblo',
         posted_date: a.posted_at,
-        title: a.title,
+        title: a.title || '無題',
         body: a.body_clean || a.body_text || '',
         url: a.url,
         tags: [a.category || 'ヘブライ語学習'],
         category: a.category || 'ヘブライ語学習'
-      }));
-      return { items, totalCount: amebloCount || items.length };
-    }
-  } else if (sourceFilter === 'brazil_diary') {
-    const { data: diaryData, count: diaryCount, error: dErr } = await client
-      .from('brazil_diary_posts')
-      .select('*', { count: 'exact' })
-      .order('posted_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      });
+    });
 
-    if (!dErr && diaryData) {
-      const items: UnifiedFeedItem[] = diaryData.map(d => ({
+    (dRes.data || []).forEach(d => {
+      allItems.push({
         item_id: String(d.id),
         source: 'brazil_diary',
         posted_date: d.posted_at,
-        title: d.title,
+        title: d.title || '無題',
         body: d.body_clean || d.body_text || '',
         url: d.url,
         tags: [d.category || 'ブラジル日記'],
         category: d.category || 'ブラジル日記'
-      }));
-      return { items, totalCount: diaryCount || items.length };
-    }
-  }
+      });
+    });
 
-  return {
-    items: (data || []) as UnifiedFeedItem[],
-    totalCount: count || 0
-  };
+    (fRes.data || []).forEach(f => {
+      allItems.push({
+        item_id: String(f.id),
+        source: 'fc2_epata',
+        posted_date: f.posted_at,
+        title: f.title || '無題',
+        body: f.body_clean || f.body_text || '',
+        url: f.url,
+        tags: [f.category || 'FC2エパタ'],
+        category: f.category || 'FC2エパタ'
+      });
+    });
+
+    (tRes.data || []).forEach(t => {
+      allItems.push({
+        item_id: String(t.id),
+        source: 'timeline',
+        posted_date: t.event_date || (t.year ? `${t.year}-01-01` : '1986-01-01'),
+        title: t.title || '年表出来事',
+        body: t.body || t.summary || '',
+        tags: t.categories ? (Array.isArray(t.categories) ? t.categories : [t.categories]) : ['年表'],
+        category: t.primary_category || '年表出来事'
+      });
+    });
+
+    allItems.sort((a, b) => {
+      if (a.source === 'blog_original' && b.source !== 'blog_original') return -1;
+      if (b.source === 'blog_original' && a.source !== 'blog_original') return 1;
+      return (b.posted_date || '').localeCompare(a.posted_date || '');
+    });
+
+    const totalCount = (qRes.count || 0) + (aRes.count || 0) + (dRes.count || 0) + (fRes.count || 0) + (tRes.count || 0) || allItems.length;
+    return {
+      items: allItems.slice(offset, offset + limit),
+      totalCount
+    };
+  }
 }
 
 export async function updateFeedItemInSupabase(item: UnifiedFeedItem): Promise<boolean> {
