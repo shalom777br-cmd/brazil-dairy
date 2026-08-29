@@ -119,10 +119,9 @@ export default function App() {
   // Supabase State
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
 
-  // Unified Feed State
+  // Unified Feed State (Consolidated blog_unified_feed)
   const [unifiedFeed, setUnifiedFeed] = useState<UnifiedFeedItem[]>([]);
   const [isFeedLoading, setIsFeedLoading] = useState(true);
-  const [selectedSourceFilter, setSelectedSourceFilter] = useState<string>('blog_original');
   const [selectedYearFilter, setSelectedYearFilter] = useState<string | null>(null);
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -168,14 +167,14 @@ export default function App() {
   };
 
 
-  const loadUnifiedFeedData = async (offset = 0, sourceFilter = 'all', append = false) => {
+  const loadUnifiedFeedData = async (offset = 0, append = false) => {
     setIsFeedLoading(true);
     try {
       let fetchedItems: UnifiedFeedItem[] = [];
       let dbTotalCount = 0;
 
       try {
-        const res = await fetchUnifiedFeed(10000, offset, sourceFilter);
+        const res = await fetchUnifiedFeed(10000, offset, 'all');
         if (res && res.items) {
           fetchedItems = res.items;
           dbTotalCount = res.totalCount;
@@ -198,55 +197,26 @@ export default function App() {
         category: p.labels && p.labels[0] ? p.labels[0] : 'ブログ原本'
       }));
 
-      if (sourceFilter === 'blog_original') {
-        const itemMap = new Map<string, UnifiedFeedItem>();
-        // Add firestore originals first
-        firestoreOriginals.forEach(item => itemMap.set(item.item_id, item));
-        // Add fetched items from Supabase
-        fetchedItems.forEach(item => itemMap.set(item.item_id, item));
-
-        const merged = Array.from(itemMap.values());
-        merged.sort((a, b) => (b.posted_date || '').localeCompare(a.posted_date || ''));
-
-        if (append) {
-          setUnifiedFeed((prev) => [...prev, ...merged]);
-        } else {
-          setUnifiedFeed(merged);
+      const itemMap = new Map<string, UnifiedFeedItem>();
+      fetchedItems.forEach(item => itemMap.set(item.item_id, item));
+      firestoreOriginals.forEach(item => {
+        if (!itemMap.has(item.item_id)) {
+          itemMap.set(item.item_id, item);
         }
-        setTotalFeedCount(merged.length);
-        setHasMoreFeed(false);
-      } else if (sourceFilter === 'all') {
-        const itemMap = new Map<string, UnifiedFeedItem>();
-        fetchedItems.forEach(item => itemMap.set(item.item_id, item));
-        firestoreOriginals.forEach(item => {
-          if (!itemMap.has(item.item_id)) {
-            itemMap.set(item.item_id, item);
-          }
-        });
+      });
 
-        const merged = Array.from(itemMap.values());
-        merged.sort((a, b) => {
-          if (a.source === 'blog_original' && b.source !== 'blog_original') return -1;
-          if (b.source === 'blog_original' && a.source !== 'blog_original') return 1;
-          return (b.posted_date || '').localeCompare(a.posted_date || '');
-        });
+      const merged = Array.from(itemMap.values());
+      merged.sort((a, b) => {
+        return (b.posted_date || '').localeCompare(a.posted_date || '');
+      });
 
-        if (append) {
-          setUnifiedFeed((prev) => [...prev, ...merged]);
-        } else {
-          setUnifiedFeed(merged);
-        }
-        setTotalFeedCount(dbTotalCount + firestoreOriginals.length);
-        setHasMoreFeed(offset + fetchedItems.length < dbTotalCount);
+      if (append) {
+        setUnifiedFeed((prev) => [...prev, ...merged]);
       } else {
-        if (append) {
-          setUnifiedFeed((prev) => [...prev, ...fetchedItems]);
-        } else {
-          setUnifiedFeed(fetchedItems);
-        }
-        setTotalFeedCount(dbTotalCount);
-        setHasMoreFeed(offset + fetchedItems.length < dbTotalCount);
+        setUnifiedFeed(merged);
       }
+      setTotalFeedCount(Math.max(dbTotalCount, merged.length));
+      setHasMoreFeed(offset + fetchedItems.length < dbTotalCount);
     } catch (err) {
       console.warn("Unified feed error fallback:", err);
     } finally {
@@ -257,7 +227,7 @@ export default function App() {
   const handleLoadMoreFeed = () => {
     const nextOffset = feedOffset + 50;
     setFeedOffset(nextOffset);
-    loadUnifiedFeedData(nextOffset, selectedSourceFilter, true);
+    loadUnifiedFeedData(nextOffset, true);
   };
 
   const handleImportPosts = () => {
@@ -305,23 +275,18 @@ export default function App() {
 
   // Load Admin status & Unified Feed
   useEffect(() => {
-    document.title = "ブラジル日記";
+    document.title = "ブラジル日記 & 統合フィード";
     const savedAdmin = localStorage.getItem("brazil_blog_admin");
     if (savedAdmin === "true") {
       setIsAdmin(true);
     }
     fetchPosts();
-    loadUnifiedFeedData(0, selectedSourceFilter, false);
+    loadUnifiedFeedData(0, false);
   }, []);
 
   useEffect(() => {
-    setFeedOffset(0);
-    loadUnifiedFeedData(0, selectedSourceFilter, false);
-  }, [selectedSourceFilter]);
-
-  useEffect(() => {
     if (posts && posts.length > 0) {
-      loadUnifiedFeedData(0, selectedSourceFilter, false);
+      loadUnifiedFeedData(0, false);
     }
   }, [posts]);
 
@@ -905,12 +870,11 @@ export default function App() {
         {/* Left Side: Main Blog Timeline (Articles Placed at Top) */}
         <section className="flex-1 order-1">
           {/* Active Filters Summary */}
-          {(searchQuery || selectedLabels.length > 0 || selectedSourceFilter !== 'all' || selectedYearFilter || selectedMonthFilter) && (
+          {(searchQuery || selectedLabels.length > 0 || selectedYearFilter || selectedMonthFilter) && (
             <div className="mb-6 p-4 bg-cream-200 border border-cream-300 rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-sm">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-navy-700 font-serif font-medium">
                   現在の絞り込み: 
-                  {selectedSourceFilter !== 'all' && ` [ソース: ${getSourceBadge(selectedSourceFilter).label}]`}
                   {selectedYearFilter && !selectedMonthFilter && ` [年: ${selectedYearFilter}年]` }
                   {selectedMonthFilter && ` [年月: ${selectedMonthFilter.split('-')[0]}年${parseInt(selectedMonthFilter.split('-')[1], 10)}月]` }
                   {searchQuery && ` [キーワード: 「${searchQuery}」]`} 
@@ -924,7 +888,6 @@ export default function App() {
                 onClick={() => {
                   setSearchQuery("");
                   setSelectedLabels([]);
-                  setSelectedSourceFilter("all");
                   setSelectedYearFilter(null);
                   setSelectedMonthFilter(null);
                 }}
@@ -945,7 +908,7 @@ export default function App() {
               <Globe className="w-12 h-12 text-cream-400 mx-auto mb-3" />
               <p className="text-lg font-serif text-navy-700 mb-2">該当するフィードが見つかりません</p>
               <p className="text-sm text-navy-600/60 max-w-md mx-auto">
-                ソースフィルターや検索キーワードを変更してみてください。
+                年月ナビゲーションや検索キーワードを変更してみてください。
               </p>
             </div>
           ) : (
@@ -1099,14 +1062,19 @@ export default function App() {
         {/* Right Side: Sidebar Navigation */}
         <aside className="w-full md:w-80 lg:w-96 space-y-6 order-2">
           
-          {/* 1. Source Filter Switcher (blog_unified_feed) */}
+          {/* 1. Unified Feed Display & Sorting Setting */}
           <div className="p-5 bg-cream-50 border border-gold-500/30 rounded-xl shadow-sm space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-2 border-b border-cream-300 pb-3">
               <div className="flex items-center gap-2 text-navy-950 font-serif font-bold text-sm">
                 <Compass className="w-4 h-4 text-gold-600" />
-                統合フィードソース
+                統合タイムライン
               </div>
-              {isFeedLoading && <RefreshCw className="w-3.5 h-3.5 text-gold-500 animate-spin" />}
+              <div className="flex items-center gap-1.5">
+                {isFeedLoading && <RefreshCw className="w-3.5 h-3.5 text-gold-500 animate-spin" />}
+                <span className="bg-navy-900 text-gold-400 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border border-gold-500/30">
+                  全 {totalFeedCount.toLocaleString()} 件
+                </span>
+              </div>
             </div>
 
             {/* Sort Order Toggle */}
@@ -1138,39 +1106,18 @@ export default function App() {
               </div>
             </div>
 
-            {/* Source Filter Tabs */}
-            <div className="flex flex-col gap-1.5">
-              {[
-                { id: 'blog_original', label: 'ブログ原本 (つぶやき)', icon: <Edit className="w-3.5 h-3.5 text-amber-600" />, badge: 'bg-amber-50 text-amber-900 border-amber-200' },
-                { id: 'all', label: 'すべてのソース', icon: <Globe className="w-3.5 h-3.5" />, badge: 'bg-navy-900 text-cream-100 border-navy-900' },
-                { id: 'timeline', label: '年表 (124)', icon: <Clock className="w-3.5 h-3.5 text-purple-600" />, badge: 'bg-purple-50 text-purple-900 border-purple-200' },
-                { id: 'fc2_epata', label: 'FC2 エパタ (1,581)', icon: <BookOpen className="w-3.5 h-3.5 text-blue-600" />, badge: 'bg-blue-50 text-blue-900 border-blue-200' },
-                { id: 'brazil_diary', label: 'ブラジル日記 (242)', icon: <Globe className="w-3.5 h-3.5 text-emerald-600" />, badge: 'bg-emerald-50 text-emerald-900 border-emerald-200' },
-                { id: 'ameblo', label: 'Ameblo (715)', icon: <Sparkles className="w-3.5 h-3.5 text-teal-600" />, badge: 'bg-teal-50 text-teal-900 border-teal-200' },
-              ].map((tab) => {
-                const isActive = selectedSourceFilter === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setSelectedSourceFilter(tab.id)}
-                    className={`w-full px-3 py-2 rounded-lg text-xs font-serif font-bold transition flex items-center justify-between cursor-pointer border ${
-                      isActive
-                        ? 'bg-navy-950 text-gold-400 border-navy-900 shadow-md ring-1 ring-gold-500/40'
-                        : `${tab.badge} hover:brightness-95`
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {tab.icon}
-                      <span>{tab.label}</span>
-                    </div>
-                    {isActive && <CheckCircle2 className="w-3.5 h-3.5 text-gold-400" />}
-                  </button>
-                );
-              })}
+            <div className="p-2.5 bg-cream-100/80 rounded-lg border border-cream-200 text-[11px] text-navy-700 font-serif leading-relaxed">
+              <div className="flex items-center gap-1.5 text-gold-700 font-bold mb-1">
+                <Globe className="w-3.5 h-3.5" />
+                <span>blog_unified_feed</span>
+              </div>
+              <p className="text-navy-600/80 text-[10.5px]">
+                FC2エパタ・ブラジル日記・Ameblo・原本・年表の全記事を1本のタイムラインに統合しています。
+              </p>
             </div>
 
             <div className="pt-2 border-t border-cream-200 text-[11px] text-navy-600/80 font-mono text-right">
-              表示件数: {filteredFeedItems.length} / {totalFeedCount} 件
+              現在の表示: {filteredFeedItems.length.toLocaleString()} / {totalFeedCount.toLocaleString()} 件
             </div>
           </div>
 
