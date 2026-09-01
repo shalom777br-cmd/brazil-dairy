@@ -198,10 +198,11 @@ export default function App() {
       }));
 
       const itemMap = new Map<string, UnifiedFeedItem>();
-      fetchedItems.forEach(item => itemMap.set(item.item_id, item));
+      fetchedItems.forEach(item => itemMap.set(`${item.source}:${item.item_id}`, item));
       firestoreOriginals.forEach(item => {
-        if (!itemMap.has(item.item_id)) {
-          itemMap.set(item.item_id, item);
+        const key = `${item.source}:${item.item_id}`;
+        if (!itemMap.has(key)) {
+          itemMap.set(key, item);
         }
       });
 
@@ -399,8 +400,8 @@ export default function App() {
   // Actual Delete Execution
   const executeDeletePost = async () => {
     if (feedItemToDelete) {
-      setUnifiedFeed((prev) => prev.filter((i) => i.item_id !== feedItemToDelete.item_id));
-      if (selectedFeedItem?.item_id === feedItemToDelete.item_id) {
+      setUnifiedFeed((prev) => prev.filter((i) => !(i.source === feedItemToDelete.source && i.item_id === feedItemToDelete.item_id)));
+      if (selectedFeedItem?.source === feedItemToDelete.source && selectedFeedItem?.item_id === feedItemToDelete.item_id) {
         setSelectedFeedItem(null);
       }
       setTotalFeedCount((prev) => Math.max(0, prev - 1));
@@ -476,10 +477,10 @@ export default function App() {
       await updateFeedItemInSupabase(updatedItem);
 
       setUnifiedFeed((prev) =>
-        prev.map((i) => (i.item_id === editingFeedItem.item_id ? updatedItem : i))
+        prev.map((i) => (i.source === editingFeedItem.source && i.item_id === editingFeedItem.item_id ? updatedItem : i))
       );
 
-      if (selectedFeedItem?.item_id === editingFeedItem.item_id) {
+      if (selectedFeedItem?.source === editingFeedItem.source && selectedFeedItem?.item_id === editingFeedItem.item_id) {
         setSelectedFeedItem(updatedItem);
       }
 
@@ -942,8 +943,8 @@ export default function App() {
 
                       return (
                         <article 
-                          id={`feed-card-${item.item_id}`}
-                          key={item.item_id}
+                          id={`feed-card-${item.source}-${item.item_id}`}
+                          key={`${item.source}:${item.item_id}`}
                           className="group relative bg-cream-50 border border-cream-300 hover:border-gold-500/50 rounded-xl p-5 md:p-6 shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer"
                           onClick={() => setSelectedFeedItem(item)}
                         >
