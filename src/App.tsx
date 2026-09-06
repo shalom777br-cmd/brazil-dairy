@@ -40,6 +40,11 @@ import {
 } from "lucide-react";
 import { SupabaseModal } from "./components/SupabaseModal";
 import { 
+  RichContentRenderer, 
+  stripHtmlAndMarkdown, 
+  extractThumbnailUrl 
+} from "./components/RichContentRenderer";
+import { 
   fetchUnifiedFeed, 
   UnifiedFeedItem, 
   updateFeedItemInSupabase, 
@@ -630,11 +635,12 @@ export default function App() {
   const filteredFeedItems = unifiedFeed.filter((item) => {
     const queryLower = searchQuery.toLowerCase().trim();
     const itemBody = item.body || "";
-    const displayTitle = item.title || (itemBody ? itemBody.replace(/[#*`\n]/g, " ").slice(0, 40) : "");
+    const cleanBodyText = stripHtmlAndMarkdown(itemBody, 1000);
+    const displayTitle = item.title || (itemBody ? stripHtmlAndMarkdown(itemBody, 40) : "");
     const matchesSearch =
       !queryLower ||
       displayTitle.toLowerCase().includes(queryLower) ||
-      itemBody.toLowerCase().includes(queryLower) ||
+      cleanBodyText.toLowerCase().includes(queryLower) ||
       (item.category && item.category.toLowerCase().includes(queryLower)) ||
       (item.tags && item.tags.some((t) => t.toLowerCase().includes(queryLower)));
 
@@ -1163,23 +1169,46 @@ export default function App() {
 
                             </div>
 
-                            {/* Title & Excerpt */}
-                            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                              <div className="space-y-2">
-                                <h3 className="font-serif text-lg md:text-xl font-bold text-navy-950 group-hover:text-gold-700 transition duration-200 leading-tight">
-                                  {item.title || (item.body ? item.body.replace(/[#*`\n]/g, " ").slice(0, 35) + (item.body.length > 35 ? "..." : "") : "無題")}
-                                </h3>
+                            {/* Title & Excerpt + Thumbnail */}
+                            {(() => {
+                              const thumbUrl = extractThumbnailUrl(item.body || "");
+                              const cleanExcerpt = stripHtmlAndMarkdown(item.body || "", 150);
+                              const displayTitle = item.title || stripHtmlAndMarkdown(item.body || "", 35) || "無題";
 
-                                <p className="text-navy-700/80 text-sm line-clamp-3 leading-relaxed">
-                                  {(item.body || "").replace(/[#*`\n]/g, " ").slice(0, 160)}
-                                  {item.body && item.body.length > 160 ? "..." : ""}
-                                </p>
-                              </div>
+                              return (
+                                <div className="flex items-start justify-between gap-3 md:gap-4">
+                                  <div className="space-y-2 flex-1 min-w-0">
+                                    <h3 className="font-serif text-lg md:text-xl font-bold text-navy-950 group-hover:text-gold-700 transition duration-200 leading-tight">
+                                      {displayTitle}
+                                    </h3>
 
-                              <div className="self-end md:self-center text-gold-500 group-hover:translate-x-1.5 transition-transform duration-200 shrink-0">
-                                <ChevronRight className="w-5 h-5" />
-                              </div>
-                            </div>
+                                    <p className="text-navy-700/80 text-sm line-clamp-3 leading-relaxed">
+                                      {cleanExcerpt || (thumbUrl ? "【写真付き記事】" : "（本文なし）")}
+                                    </p>
+                                  </div>
+
+                                  {/* Thumbnail image if available */}
+                                  {thumbUrl && (
+                                    <div className="shrink-0 w-20 h-20 md:w-24 md:h-24 rounded-lg overflow-hidden border border-cream-300 bg-cream-200/60 shadow-2xs">
+                                      <img
+                                        src={thumbUrl}
+                                        alt={displayTitle}
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer"
+                                        onError={(e) => {
+                                          (e.target as HTMLElement).style.display = "none";
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+
+                                  <div className="self-center text-gold-500 group-hover:translate-x-1.5 transition-transform duration-200 shrink-0">
+                                    <ChevronRight className="w-5 h-5" />
+                                  </div>
+                                </div>
+                              );
+                            })()}
 
                             {/* External URL indicator */}
                             {item.url && (
@@ -1587,7 +1616,7 @@ export default function App() {
                   </div>
 
                   <h2 className="font-serif text-2xl md:text-3xl font-bold text-navy-950 leading-tight">
-                    {selectedFeedItem.title || (selectedFeedItem.body ? selectedFeedItem.body.replace(/[#*`\n]/g, " ").slice(0, 40) + (selectedFeedItem.body.length > 40 ? "..." : "") : "無題")}
+                    {selectedFeedItem.title || (selectedFeedItem.body ? stripHtmlAndMarkdown(selectedFeedItem.body, 40) : "無題")}
                   </h2>
 
                   {/* Category and Tags */}
@@ -1610,10 +1639,8 @@ export default function App() {
 
                 <hr className="border-cream-300" />
 
-                {/* Markdown Rendered Content */}
-                <div className="markdown-body">
-                  <Markdown>{selectedFeedItem.body || "*本文はありません*"}</Markdown>
-                </div>
+                {/* Rich Content (HTML / Markdown) Rendered Content */}
+                <RichContentRenderer content={selectedFeedItem.body || ""} />
               </div>
 
               {/* Reader Footer */}
@@ -1749,10 +1776,8 @@ export default function App() {
 
                 <hr className="border-cream-300" />
 
-                {/* Markdown Rendered Content */}
-                <div className="markdown-body">
-                  <Markdown>{selectedPost.content}</Markdown>
-                </div>
+                {/* Rich Content (HTML / Markdown) Rendered Content */}
+                <RichContentRenderer content={selectedPost.content || ""} />
               </div>
 
               {/* Reader Footer */}
@@ -2034,8 +2059,8 @@ export default function App() {
                     <span className="text-[10px] text-gold-700 font-serif font-bold uppercase tracking-wider block mb-2">
                       プレビュー
                     </span>
-                    <div className="markdown-body text-xs line-clamp-6">
-                      <Markdown>{newContent}</Markdown>
+                    <div className="text-xs line-clamp-6">
+                      <RichContentRenderer content={newContent} />
                     </div>
                   </div>
                 )}
