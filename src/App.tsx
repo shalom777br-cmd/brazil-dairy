@@ -1,6 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, addDoc, query, orderBy, setDoc, doc, deleteDoc } from "firebase/firestore";
-import { db } from "./lib/firebase";
 import { BlogPost } from "./types";
 import { dummyPosts } from "./data/dummy";
 import { importedPosts } from "./data/imported_posts";
@@ -38,47 +36,15 @@ import {
   CheckCircle2
 } from "lucide-react";
 import { SupabaseModal } from "./components/SupabaseModal";
-import { fetchUnifiedFeed, UnifiedFeedItem, updateFeedItemInSupabase, insertNewBlogOriginalInSupabase } from "./lib/supabase";
-
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: null,
-      email: null,
-      emailVerified: null,
-      isAnonymous: null,
-      tenantId: null
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
+import { 
+  fetchUnifiedFeed, 
+  UnifiedFeedItem, 
+  updateFeedItemInSupabase, 
+  insertNewBlogOriginalInSupabase,
+  deleteFeedItemInSupabase,
+  importPostsToSupabase,
+  getSupabaseClient
+} from "./lib/supabase";
 
 export default function App() {
   const [posts, setPosts] = useState<BlogPost[]>([]);
@@ -183,10 +149,10 @@ export default function App() {
         console.warn("Supabase feed fetch notice:", err);
       }
 
-      // Map local Firestore posts to UnifiedFeedItems for blog_original
+      // Map local posts to UnifiedFeedItems for blog_original
       const realPosts = (posts || []).filter(p => p.id && !p.id.startsWith("dummy-"));
-      const firestorePostsSource = realPosts.length > 0 ? realPosts : importedPosts;
-      const firestoreOriginals: UnifiedFeedItem[] = firestorePostsSource.map((p, idx) => ({
+      const postsSource = realPosts.length > 0 ? realPosts : importedPosts;
+      const originalFeedItems: UnifiedFeedItem[] = postsSource.map((p, idx) => ({
         item_id: String(p.id || `post-${idx}`),
         source: 'blog_original',
         posted_date: p.published ? p.published.split('T')[0] : '2026-07-28',
@@ -199,7 +165,7 @@ export default function App() {
 
       const itemMap = new Map<string, UnifiedFeedItem>();
       fetchedItems.forEach(item => itemMap.set(`${item.source}:${item.item_id}`, item));
-      firestoreOriginals.forEach(item => {
+      originalFeedItems.forEach(item => {
         const key = `${item.source}:${item.item_id}`;
         if (!itemMap.has(key)) {
           itemMap.set(key, item);
@@ -237,36 +203,32 @@ export default function App() {
 
   const executeImportPosts = async () => {
     setIsImporting(true);
-    setImportStatusMessage("インポート中...");
+    setImportStatusMessage("Supabaseへインポート中...");
     try {
-      let successCount = 0;
       const total = importedPosts.length;
       setImportProgress({ current: 0, total });
 
-      for (let i = 0; i < total; i++) {
-        const post = importedPosts[i];
-        const docRef = doc(db, "posts", post.id);
-        await setDoc(docRef, {
-          title: post.title,
-          published: post.published,
-          content: post.content,
-          labels: post.labels || [],
-          url: post.url || ""
-        });
-        successCount++;
-        setImportProgress({ current: successCount, total });
-      }
-      setImportStatusMessage(`成功：${successCount}件の記事をインポートしました！`);
-      setImportResult({
-        success: true,
-        message: `インポートが完了しました。全 ${successCount} 件の記事データを登録・更新しました。`
+      const result = await importPostsToSupabase(importedPosts, (current, tot) => {
+        setImportProgress({ current, total: tot });
+        setImportStatusMessage(`Supabaseへインポート中... (${current}/${tot}件)`);
       });
-      await fetchPosts();
-    } catch (error) {
-      console.error("Error importing posts:", error);
+
+      if (result.success) {
+        setImportStatusMessage(`成功：${result.count}件の記事をSupabaseにインポートしました！`);
+        setImportResult({
+          success: true,
+          message: `インポートが完了しました。全 ${result.count} 件の記事データをSupabase（brazil_diary_posts）に登録・更新しました。`
+        });
+        await fetchPosts();
+        await loadUnifiedFeedData(0, false);
+      } else {
+        throw new Error(result.error || "インポート処理に失敗しました");
+      }
+    } catch (error: any) {
+      console.error("Error importing posts to Supabase:", error);
       setImportResult({
         success: false,
-        message: "インポートに失敗しました。接続環境、または権限設定をご確認ください。"
+        message: `インポートに失敗しました: ${error?.message || "接続環境、または権限設定をご確認ください。"}`
       });
       setImportStatusMessage("エラーにより中断されました");
     } finally {
@@ -294,22 +256,37 @@ export default function App() {
   const fetchPosts = async () => {
     setIsLoading(true);
     try {
-      const q = query(collection(db, "posts"), orderBy("published", "desc"));
-      const querySnapshot = await getDocs(q);
-      const fetchedPosts: BlogPost[] = [];
-      querySnapshot.forEach((docSnap) => {
-        if (docSnap.id.startsWith("dummy-")) {
-          // Clean up legacy dummy doc from Firestore
-          deleteDoc(doc(db, "posts", docSnap.id)).catch(() => {});
-        } else {
-          fetchedPosts.push({ id: docSnap.id, ...docSnap.data() } as BlogPost);
-        }
-      });
+      const client = getSupabaseClient();
+      if (!client) {
+        setPosts(importedPosts);
+        return;
+      }
 
-      setPosts(fetchedPosts);
+      const { data, error } = await client
+        .from("brazil_diary_posts")
+        .select("*")
+        .order("posted_at", { ascending: false })
+        .limit(1000);
+
+      if (error) {
+        console.warn("Error fetching posts from Supabase brazil_diary_posts:", error);
+        setPosts(importedPosts);
+      } else if (data && data.length > 0) {
+        const fetchedPosts: BlogPost[] = data.map((d: any) => ({
+          id: String(d.entry_id || d.id),
+          title: d.title || "無題",
+          published: d.posted_at || "2011-01-01",
+          content: d.body_text || d.body_clean || "",
+          labels: d.category ? [d.category] : ["ブラジル日記"],
+          url: d.url || undefined,
+        }));
+        setPosts(fetchedPosts);
+      } else {
+        setPosts(importedPosts);
+      }
     } catch (error) {
-      console.error("Error fetching posts:", error);
-      setPosts([]);
+      console.error("Error fetching posts from Supabase:", error);
+      setPosts(importedPosts);
     } finally {
       setIsLoading(false);
     }
@@ -400,6 +377,7 @@ export default function App() {
   // Actual Delete Execution
   const executeDeletePost = async () => {
     if (feedItemToDelete) {
+      await deleteFeedItemInSupabase(feedItemToDelete);
       setUnifiedFeed((prev) => prev.filter((i) => !(i.source === feedItemToDelete.source && i.item_id === feedItemToDelete.item_id)));
       if (selectedFeedItem?.source === feedItemToDelete.source && selectedFeedItem?.item_id === feedItemToDelete.item_id) {
         setSelectedFeedItem(null);
@@ -412,19 +390,21 @@ export default function App() {
 
     if (!postToDelete) return;
     try {
-      const docRef = doc(db, "posts", postToDelete.id);
-      await deleteDoc(docRef);
+      const client = getSupabaseClient();
+      if (client) {
+        if (!isNaN(Number(postToDelete.id))) {
+          await client.from("brazil_diary_posts").delete().eq("entry_id", Number(postToDelete.id));
+        } else {
+          await client.from("brazil_diary_posts").delete().eq("id", postToDelete.id);
+        }
+      }
       setPosts((prev) => prev.filter((p) => p.id !== postToDelete.id));
+      setUnifiedFeed((prev) => prev.filter((i) => !(i.source === "brazil_diary" && i.item_id === postToDelete.id)));
       if (selectedPost?.id === postToDelete.id) {
         setSelectedPost(null);
       }
     } catch (error) {
-      console.error("Error deleting post:", error);
-      try {
-        handleFirestoreError(error, OperationType.DELETE, `posts/${postToDelete.id}`);
-      } catch (e) {
-        console.error(e);
-      }
+      console.error("Error deleting post from Supabase:", error);
     } finally {
       setIsDeleteConfirmOpen(false);
       setPostToDelete(null);
@@ -504,15 +484,53 @@ export default function App() {
       }
 
       try {
-        const docRef = doc(db, "posts", targetId);
-        await setDoc(docRef, postData);
+        const client = getSupabaseClient();
+        if (client) {
+          const bodyClean = newContent
+            .replace(/<br\s*\/?>/gi, "\n")
+            .replace(/<\/?[^>]+(>|$)/g, "")
+            .trim();
+
+          let query = client.from("brazil_diary_posts").update({
+            title: titleToSave || "無題",
+            posted_at: newPublished,
+            body_text: newContent,
+            body_clean: bodyClean,
+            category: parsedLabels[0] || "ブラジル日記",
+            url: newUrl.trim() || ""
+          });
+
+          if (!isNaN(Number(targetId))) {
+            await query.eq("entry_id", Number(targetId));
+          } else {
+            await query.eq("id", targetId);
+          }
+        }
 
         setPosts((prev) => prev.map((p) => p.id === editingPostId ? postData : p));
         if (selectedPost?.id === editingPostId) {
           setSelectedPost(postData);
         }
+
+        // Also update in unified feed if present
+        setUnifiedFeed((prev) =>
+          prev.map((i) => {
+            if (i.source === "brazil_diary" && i.item_id === targetId) {
+              return {
+                ...i,
+                title: postData.title,
+                posted_date: postData.published,
+                body: postData.content,
+                category: postData.labels[0] || i.category,
+                tags: postData.labels,
+                url: postData.url
+              };
+            }
+            return i;
+          })
+        );
       } catch (error) {
-        console.error("Error saving post:", error);
+        console.error("Error saving post to Supabase:", error);
       }
 
       handleCloseWriteModal();
@@ -540,23 +558,15 @@ export default function App() {
     setUnifiedFeed((prev) => [newItem, ...prev]);
     setTotalFeedCount((prev) => prev + 1);
 
-    // Also write to Firestore
-    try {
-      const targetId = newItem.item_id;
-      const postData: BlogPost = {
-        id: targetId,
-        title: titleToSave || "無題",
-        published: newPublished,
-        content: newContent,
-        labels: parsedLabels.length > 0 ? parsedLabels : ["ブログ原本"],
-      };
-      if (newUrl.trim()) postData.url = newUrl.trim();
-      const docRef = doc(db, "posts", targetId);
-      await setDoc(docRef, postData);
-      setPosts((prev) => [postData, ...prev]);
-    } catch (error) {
-      console.warn("Secondary Firestore save:", error);
-    }
+    const postData: BlogPost = {
+      id: newItem.item_id,
+      title: titleToSave || "無題",
+      published: newPublished,
+      content: newContent,
+      labels: parsedLabels.length > 0 ? parsedLabels : ["ブログ原本"],
+    };
+    if (newUrl.trim()) postData.url = newUrl.trim();
+    setPosts((prev) => [postData, ...prev]);
 
     handleCloseWriteModal();
     setIsSubmitting(false);
@@ -761,23 +771,54 @@ export default function App() {
           <Globe className="w-96 h-96 text-gold-500" strokeWidth={1} />
         </div>
         
-        <div className="max-w-6xl mx-auto px-4 py-8 md:py-12 flex flex-col md:flex-row md:items-center md:justify-between gap-6 relative z-10">
+        <div className="max-w-6xl mx-auto px-4 py-4 md:py-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 relative z-10">
           <div>
-            <div className="flex items-center gap-2 mb-2 text-gold-400">
-              <Compass className="w-5 h-5 animate-pulse" />
-              <span className="font-serif tracking-widest text-xs uppercase">Missão de Diário</span>
-              <span className="h-px w-8 bg-gold-500/50"></span>
-              <span className="text-xs tracking-wider">統合ブログアーカイブ</span>
+            <div className="flex items-center gap-2 mb-1 text-gold-400">
+              <Compass className="w-3.5 h-3.5 animate-pulse" />
+              <span className="font-serif tracking-widest text-[10px] md:text-[11px] uppercase">Missão de Diário</span>
+              <span className="h-px w-6 bg-gold-500/50"></span>
+              <span className="text-[10px] md:text-[11px] tracking-wider text-gold-300/90">統合ブログアーカイブ</span>
             </div>
-            <h1 className="font-serif text-3xl md:text-5xl font-bold tracking-tight text-cream-50">
+            <h1 className="font-serif text-xl md:text-2xl font-bold tracking-tight text-cream-50">
               ブラジル日記 & 統合フィード
             </h1>
-            <p className="mt-2 text-navy-100/80 max-w-xl text-sm leading-relaxed">
+            <p className="mt-1 text-navy-200/80 max-w-xl text-xs leading-relaxed">
               年表・FC2ブログエパタ・ブラジル日記・Amebloを1本化。神様の導きと恵みの軌跡を統合タイムラインでお届けします。
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* 総合タイムライン 並び順切り替え（トップ欄に小さく配置） */}
+            <div className="flex items-center gap-1 bg-navy-950/80 border border-gold-500/30 rounded-lg p-1 shadow-sm">
+              <span className="text-[10px] text-gold-400/90 px-1.5 flex items-center gap-1 font-serif">
+                <Clock className="w-3 h-3 text-gold-500" /> 並び順
+              </span>
+              <button
+                id="btn-sort-desc-header"
+                onClick={() => setSortOrder('desc')}
+                className={`px-2 py-0.5 rounded text-[10.5px] font-serif transition cursor-pointer ${
+                  sortOrder === 'desc'
+                    ? 'bg-gold-500 text-navy-950 font-bold shadow-xs'
+                    : 'text-cream-200 hover:text-gold-300 hover:bg-navy-800/60'
+                }`}
+                title="新しい順に表示"
+              >
+                新しい順
+              </button>
+              <button
+                id="btn-sort-asc-header"
+                onClick={() => setSortOrder('asc')}
+                className={`px-2 py-0.5 rounded text-[10.5px] font-serif transition cursor-pointer ${
+                  sortOrder === 'asc'
+                    ? 'bg-gold-500 text-navy-950 font-bold shadow-xs'
+                    : 'text-cream-200 hover:text-gold-300 hover:bg-navy-800/60'
+                }`}
+                title="古い順に表示"
+              >
+                古い順
+              </button>
+            </div>
+
             {isAdmin ? (
               <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center bg-navy-800/80 p-2 rounded-lg border border-gold-500/20">
                 <span className="text-xs text-gold-400 px-2 py-1 flex items-center gap-1">
@@ -1922,12 +1963,12 @@ export default function App() {
 
               <div className="space-y-3 text-sm text-navy-700 leading-relaxed font-serif">
                 <p>
-                  静的データファイルに含まれる<strong>全 {importedPosts.length} 件</strong>の記事データをFirestoreデータベースにインポート（移行）します。
+                  静的データファイルに含まれる<strong>全 {importedPosts.length} 件</strong>の記事データをSupabaseデータベース（brazil_diary_posts）にインポート（移行）します。
                 </p>
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 flex items-start gap-2">
                   <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <span>
-                    同じID（記事識別子）を持つ記事が既にFirestoreに登録されている場合、<strong>自動的に上書き（更新）</strong>されます。
+                    同じID（記事識別子）を持つ記事が既にSupabaseに登録されている場合、<strong>自動的に上書き（更新）</strong>されます。
                   </span>
                 </div>
               </div>

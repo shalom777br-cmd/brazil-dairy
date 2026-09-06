@@ -433,3 +433,125 @@ export async function insertNewBlogOriginalInSupabase(item: UnifiedFeedItem): Pr
   return null;
 }
 
+export async function deleteFeedItemInSupabase(item: UnifiedFeedItem): Promise<boolean> {
+  try {
+    const apiRes = await fetch("/api/feed/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_id: item.item_id, source: item.source }),
+    });
+    if (apiRes.ok) {
+      const result = await apiRes.json();
+      if (result.success) return true;
+    }
+  } catch (err) {
+    console.warn("API delete failed, attempting direct Supabase delete:", err);
+  }
+
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    let error = null;
+    if (item.source === 'blog_original') {
+      const res = await client.from('blog_queue').delete().eq('id', item.item_id);
+      error = res.error;
+    } else if (item.source === 'ameblo') {
+      const res = await client.from('ameblo_posts').delete().eq('id', item.item_id);
+      error = res.error;
+    } else if (item.source === 'brazil_diary') {
+      const res = await client.from('brazil_diary_posts').delete().eq('id', item.item_id);
+      error = res.error;
+    } else if (item.source === 'fc2_epata') {
+      const res = await client.from('fc2_epata_blog_posts').delete().eq('id', item.item_id);
+      error = res.error;
+    } else if (item.source === 'timeline') {
+      const res = await client.from('memory_timeline_events').delete().eq('id', item.item_id);
+      error = res.error;
+    }
+    return !error;
+  } catch (err) {
+    console.warn("Supabase delete error:", err);
+  }
+  return false;
+}
+
+export async function importPostsToSupabase(
+  posts: Array<{
+    id?: string;
+    title?: string;
+    published?: string;
+    content?: string;
+    labels?: string[];
+    url?: string;
+  }>,
+  onProgress?: (current: number, total: number) => void
+): Promise<{ success: boolean; count: number; error?: string }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, count: 0, error: "Supabaseクライアントが初期化されていません" };
+  }
+
+  try {
+    const formattedRecords = posts.map((post, idx) => {
+      const rawContent = post.content || "";
+      const bodyClean = rawContent
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/?[^>]+(>|$)/g, "")
+        .trim();
+
+      let postedAt = "2011-01-01";
+      if (post.published) {
+        postedAt = post.published.split("T")[0];
+      }
+
+      let entryId: number | null = null;
+      if (post.id && !isNaN(Number(post.id))) {
+        const num = parseInt(post.id, 10);
+        if (num < 2147483647 && num > -2147483648) {
+          entryId = num;
+        } else {
+          entryId = idx + 1;
+        }
+      } else {
+        entryId = idx + 1;
+      }
+
+      return {
+        entry_id: entryId,
+        title: post.title || "無題",
+        url: post.url || "",
+        posted_at: postedAt,
+        category: post.labels && post.labels.length > 0 ? post.labels[0] : "ブラジル日記",
+        body_text: rawContent,
+        body_clean: bodyClean,
+        importance_score: "C",
+        source: "brazil_diary_blogger"
+      };
+    });
+
+    const BATCH_SIZE = 50;
+    let successCount = 0;
+
+    for (let i = 0; i < formattedRecords.length; i += BATCH_SIZE) {
+      const chunk = formattedRecords.slice(i, i + BATCH_SIZE);
+      const { error } = await client.from("brazil_diary_posts").upsert(chunk);
+
+      if (error) {
+        console.error("Batch insert error:", error);
+      } else {
+        successCount += chunk.length;
+      }
+
+      if (onProgress) {
+        onProgress(successCount, formattedRecords.length);
+      }
+    }
+
+    return { success: true, count: successCount };
+  } catch (err: any) {
+    console.error("importPostsToSupabase error:", err);
+    return { success: false, count: 0, error: err.message || String(err) };
+  }
+}
+
