@@ -20,6 +20,9 @@ import {
   RefreshCw,
   LogOut,
   ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Sparkles,
   Info,
   Download,
@@ -96,6 +99,8 @@ export default function App() {
   const [hasMoreFeed, setHasMoreFeed] = useState<boolean>(true);
   const [totalFeedCount, setTotalFeedCount] = useState<number>(0);
   const [selectedFeedItem, setSelectedFeedItem] = useState<UnifiedFeedItem | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const POSTS_PER_PAGE = 10;
 
   // Editing & Image State
   const [editingFeedItem, setEditingFeedItem] = useState<UnifiedFeedItem | null>(null);
@@ -697,7 +702,84 @@ export default function App() {
     );
   };
 
-  // Group Unified Feed Items by Year
+  // Sort all filtered feed items globally by date according to sortOrder
+  const sortedFeedItems = useMemo(() => {
+    return [...filteredFeedItems].sort((a, b) => {
+      const dateA = a.posted_date || "";
+      const dateB = b.posted_date || "";
+      if (dateA === dateB) {
+        return (a.title || "").localeCompare(b.title || "");
+      }
+      return sortOrder === 'desc'
+        ? dateB.localeCompare(dateA)
+        : dateA.localeCompare(dateB);
+    });
+  }, [filteredFeedItems, sortOrder]);
+
+  // Reset to page 1 whenever filters or sorting order change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedLabels, selectedYearFilter, selectedMonthFilter, sortOrder]);
+
+  // Pagination calculation (strictly 10 posts per page)
+  const totalPages = Math.max(1, Math.ceil(sortedFeedItems.length / POSTS_PER_PAGE));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * POSTS_PER_PAGE;
+  const endIndex = startIndex + POSTS_PER_PAGE;
+  const paginatedFeedItems = sortedFeedItems.slice(startIndex, endIndex);
+
+  // Group current page's 10 items by Year for timeline display
+  const paginatedFeedByYear: { [year: string]: UnifiedFeedItem[] } = {};
+  paginatedFeedItems.forEach((item) => {
+    const year = item.posted_date ? item.posted_date.split("-")[0] : "その他";
+    if (!paginatedFeedByYear[year]) {
+      paginatedFeedByYear[year] = [];
+    }
+    paginatedFeedByYear[year].push(item);
+  });
+
+  const paginatedSortedFeedYears = Object.keys(paginatedFeedByYear).sort((a, b) => {
+    if (a === "その他") return 1;
+    if (b === "その他") return -1;
+    return sortOrder === 'desc' ? b.localeCompare(a) : a.localeCompare(b);
+  });
+
+  const handlePageChange = (newPage: number) => {
+    const targetPage = Math.min(Math.max(1, newPage), totalPages);
+    setCurrentPage(targetPage);
+    const topEl = document.getElementById("timeline-top");
+    if (topEl) {
+      topEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      window.scrollTo({ top: 180, behavior: "smooth" });
+    }
+  };
+
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (safeCurrentPage > 3) {
+        pages.push("...");
+      }
+      const start = Math.max(2, safeCurrentPage - 1);
+      const end = Math.min(totalPages - 1, safeCurrentPage + 1);
+      for (let i = start; i <= end; i++) {
+        if (!pages.includes(i)) pages.push(i);
+      }
+      if (safeCurrentPage < totalPages - 2) {
+        pages.push("...");
+      }
+      if (!pages.includes(totalPages)) {
+        pages.push(totalPages);
+      }
+    }
+    return pages;
+  };
+
+  // Group all filtered feed items by year (used by navigation and counters)
   const feedByYear: { [year: string]: UnifiedFeedItem[] } = {};
   filteredFeedItems.forEach((item) => {
     const year = item.posted_date ? item.posted_date.split("-")[0] : "その他";
@@ -911,6 +993,46 @@ export default function App() {
         
         {/* Left Side: Main Blog Timeline (Articles Placed at Top) */}
         <section className="flex-1 order-1">
+          <div id="timeline-top" className="scroll-mt-4"></div>
+
+          {/* Timeline Page Summary & Top Navigation */}
+          {sortedFeedItems.length > 0 && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-cream-50 border border-gold-500/20 rounded-lg shadow-2xs">
+              <div className="flex items-center gap-2 text-xs font-serif text-navy-800">
+                <span className="font-bold text-navy-950">
+                  ページ {safeCurrentPage} / {totalPages}
+                </span>
+                <span className="text-navy-600/70 font-mono text-[11px]">
+                  (全 {sortedFeedItems.length.toLocaleString()} 件中 {startIndex + 1}〜{Math.min(endIndex, sortedFeedItems.length)} 件を表示)
+                </span>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    id="btn-prev-page-top"
+                    onClick={() => handlePageChange(safeCurrentPage - 1)}
+                    disabled={safeCurrentPage <= 1}
+                    className="px-2.5 py-1 text-xs font-serif rounded border border-cream-300 bg-cream-100 hover:bg-cream-200 disabled:opacity-30 disabled:pointer-events-none text-navy-900 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> 前へ
+                  </button>
+                  <span className="px-2 text-xs font-mono font-bold text-navy-900">
+                    {safeCurrentPage} / {totalPages}
+                  </span>
+                  <button
+                    id="btn-next-page-top"
+                    onClick={() => handlePageChange(safeCurrentPage + 1)}
+                    disabled={safeCurrentPage >= totalPages}
+                    className="px-2.5 py-1 text-xs font-serif rounded border border-cream-300 bg-cream-100 hover:bg-cream-200 disabled:opacity-30 disabled:pointer-events-none text-navy-900 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    次へ <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Active Filters Summary */}
           {(searchQuery || selectedLabels.length > 0 || selectedYearFilter || selectedMonthFilter) && (
             <div className="mb-6 p-4 bg-cream-200 border border-cream-300 rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -955,7 +1077,7 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-12">
-              {sortedFeedYears.map((year) => (
+              {paginatedSortedFeedYears.map((year) => (
                 <div key={year} className="relative">
                   {/* Year Header Banner */}
                   <div className="sticky top-0 z-10 py-2 mb-6">
@@ -967,9 +1089,9 @@ export default function App() {
                   {/* Vertical Timeline Thread */}
                   <div className="absolute left-6 md:left-8 top-12 bottom-0 w-0.5 bg-gradient-to-b from-gold-500/30 to-gold-500/5"></div>
 
-                  {/* Feed Items under this year */}
+                  {/* Feed Items under this year (limited to current page's 10 items) */}
                   <div className="space-y-8 pl-12 md:pl-16">
-                    {feedByYear[year].map((item, idx) => {
+                    {paginatedFeedByYear[year].map((item, idx) => {
                       const badge = getSourceBadge(item.source);
                       const stampInfo = getPortugueseMonth(item.posted_date || "2011-01-01");
                       const stampRotations = ["-rotate-6", "rotate-3", "-rotate-3", "rotate-6"];
@@ -1075,23 +1197,106 @@ export default function App() {
                 </div>
               ))}
 
-              {/* Load More Button */}
+              {/* Bottom Pagination Navigation */}
+              {totalPages > 1 && (
+                <nav aria-label="記事ページ送り" className="mt-8 pt-6 border-t border-cream-300 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-xs font-serif text-navy-700">
+                    全 <span className="font-bold font-mono text-navy-900">{sortedFeedItems.length.toLocaleString()}</span> 件中{" "}
+                    <span className="font-mono font-bold text-navy-900">{startIndex + 1}〜{Math.min(endIndex, sortedFeedItems.length)}</span> 件を表示
+                  </div>
+
+                  <div className="flex items-center gap-1 flex-wrap justify-center">
+                    {/* First Page */}
+                    <button
+                      id="btn-page-first"
+                      onClick={() => handlePageChange(1)}
+                      disabled={safeCurrentPage <= 1}
+                      className="p-1.5 rounded border border-cream-300 bg-cream-50 hover:bg-cream-200 disabled:opacity-25 disabled:pointer-events-none text-navy-900 text-xs font-serif transition flex items-center cursor-pointer shadow-2xs"
+                      title="最初のページへ"
+                    >
+                      <ChevronsLeft className="w-4 h-4" />
+                    </button>
+
+                    {/* Prev Page */}
+                    <button
+                      id="btn-page-prev"
+                      onClick={() => handlePageChange(safeCurrentPage - 1)}
+                      disabled={safeCurrentPage <= 1}
+                      className="px-2.5 py-1.5 rounded border border-cream-300 bg-cream-50 hover:bg-cream-200 disabled:opacity-25 disabled:pointer-events-none text-navy-900 text-xs font-serif transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <ChevronLeft className="w-4 h-4" /> 前へ
+                    </button>
+
+                    {/* Page Numbers */}
+                    <div className="flex items-center gap-1">
+                      {getPageNumbers().map((p, pIdx) => {
+                        if (p === "...") {
+                          return (
+                            <span key={`ellipsis-${pIdx}`} className="px-1.5 py-1 text-xs text-navy-400 font-mono">
+                              …
+                            </span>
+                          );
+                        }
+                        const pageNum = Number(p);
+                        const isActive = pageNum === safeCurrentPage;
+                        return (
+                          <button
+                            key={`page-${pageNum}`}
+                            id={`btn-page-${pageNum}`}
+                            onClick={() => handlePageChange(pageNum)}
+                            className={`min-w-[32px] h-8 px-2 py-1 rounded text-xs font-serif font-bold transition cursor-pointer flex items-center justify-center ${
+                              isActive
+                                ? "bg-navy-900 text-gold-400 border border-gold-500/40 shadow-sm"
+                                : "bg-cream-50 border border-cream-300 text-navy-800 hover:bg-cream-200 hover:text-navy-950"
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Next Page */}
+                    <button
+                      id="btn-page-next"
+                      onClick={() => handlePageChange(safeCurrentPage + 1)}
+                      disabled={safeCurrentPage >= totalPages}
+                      className="px-2.5 py-1.5 rounded border border-cream-300 bg-cream-50 hover:bg-cream-200 disabled:opacity-25 disabled:pointer-events-none text-navy-900 text-xs font-serif transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      次へ <ChevronRight className="w-4 h-4" />
+                    </button>
+
+                    {/* Last Page */}
+                    <button
+                      id="btn-page-last"
+                      onClick={() => handlePageChange(totalPages)}
+                      disabled={safeCurrentPage >= totalPages}
+                      className="p-1.5 rounded border border-cream-300 bg-cream-50 hover:bg-cream-200 disabled:opacity-25 disabled:pointer-events-none text-navy-900 text-xs font-serif transition flex items-center cursor-pointer shadow-2xs"
+                      title="最後のページへ"
+                    >
+                      <ChevronsRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </nav>
+              )}
+
+              {/* Background feed data fetch indicator if more data exists on server */}
               {hasMoreFeed && (
-                <div className="text-center py-6">
+                <div className="text-center py-4">
                   <button
                     onClick={handleLoadMoreFeed}
                     disabled={isFeedLoading}
-                    className="bg-navy-900 hover:bg-navy-800 disabled:bg-navy-950 text-cream-100 hover:text-gold-400 font-serif font-bold text-xs py-3 px-8 rounded-xl shadow-md border border-gold-500/30 transition flex items-center gap-2 mx-auto cursor-pointer"
+                    className="text-navy-600 hover:text-navy-950 text-xs font-serif underline transition flex items-center gap-1.5 mx-auto cursor-pointer"
                   >
                     {isFeedLoading ? (
                       <>
-                        <RefreshCw className="w-4 h-4 animate-spin text-gold-400" />
-                        読み込み中...
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-gold-600" />
+                        データベースから追加読み込み中...
                       </>
                     ) : (
                       <>
-                        <BookOpen className="w-4 h-4 text-gold-400" />
-                        さらに読み込む ({filteredFeedItems.length} / {totalFeedCount} 件)
+                        <BookOpen className="w-3.5 h-3.5 text-gold-600" />
+                        データベースから全件キャッシュを更新 ({unifiedFeed.length} / {totalFeedCount} 件)
                       </>
                     )}
                   </button>
@@ -1158,8 +1363,11 @@ export default function App() {
               </p>
             </div>
 
-            <div className="pt-2 border-t border-cream-200 text-[11px] text-navy-600/80 font-mono text-right">
-              現在の表示: {filteredFeedItems.length.toLocaleString()} / {totalFeedCount.toLocaleString()} 件
+            <div className="pt-2 border-t border-cream-200 text-[11px] text-navy-600/80 font-mono flex items-center justify-between">
+              <span className="text-gold-700 font-serif font-bold">1ページ10件表示</span>
+              <span>
+                {safeCurrentPage} / {totalPages} 頁 ({startIndex + 1}〜{Math.min(endIndex, sortedFeedItems.length)} / 全{sortedFeedItems.length.toLocaleString()}件)
+              </span>
             </div>
           </div>
 
